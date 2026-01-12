@@ -8,7 +8,7 @@ export const analyzeTransactionsAI = async (
   accountType: "Savings" | "Current" = "Savings"
 ) => {
   const model = genAI.getGenerativeModel({
-    model: "gemini-3.0-flash"
+    model: "gemini-1.5-flash"
   });
 
   const systemInstruction = `
