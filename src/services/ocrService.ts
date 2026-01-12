@@ -2,12 +2,21 @@ import { createRequire } from "module";
 import Tesseract from "tesseract.js";
 
 const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse");
 
+// Load pdf-parse safely (CommonJS → ESM compatible)
+const pdfParseLib = require("pdf-parse");
+const pdfParse =
+  typeof pdfParseLib === "function"
+    ? pdfParseLib
+    : pdfParseLib.default;
+
+/**
+ * Extract text from PDF or scanned document
+ */
 export const extractTextFromPDF = async (
   buffer: Buffer
 ): Promise<string> => {
-
+  // 1️⃣ Try normal PDF text extraction
   const data = await pdfParse(buffer);
 
   console.log("📄 PDF PARSE TEXT LENGTH:", data?.text?.length || 0);
@@ -17,6 +26,7 @@ export const extractTextFromPDF = async (
     return data.text;
   }
 
+  // 2️⃣ Fallback OCR for scanned PDFs / images
   console.log("⚠️ Falling back to OCR");
 
   const ocrResult = await Tesseract.recognize(buffer, "eng");
