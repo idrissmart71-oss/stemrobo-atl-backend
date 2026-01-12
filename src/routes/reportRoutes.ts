@@ -8,13 +8,11 @@ const router = express.Router();
 
 /**
  * TEXT-ONLY ANALYSIS
- * POST /generate-report
  */
 router.post("/", generateReport);
 
 /**
  * DOCUMENT UPLOAD (PDF / IMAGE)
- * POST /generate-report/upload
  */
 router.post(
   "/upload",
@@ -33,7 +31,7 @@ router.post(
       const accountType =
         req.body.accountType === "Current" ? "Current" : "Savings";
 
-      /* ================= PDF CASE ================= */
+      /* ========== PDF CASE ========== */
       if (mimetype === "application/pdf") {
         console.log("📄 PDF detected — sending directly to Gemini");
 
@@ -43,6 +41,7 @@ router.post(
 
         const result = await analyzeTransactionsAI(
           prompt,
+          undefined,
           mode,
           accountType
         );
@@ -50,7 +49,7 @@ router.post(
         return res.json({ success: true, data: result });
       }
 
-      /* ================= IMAGE CASE ================= */
+      /* ========== IMAGE CASE ========== */
       console.log("🖼 Image detected — running OCR");
 
       const extractedText = await extractTextFromImage(buffer);
@@ -63,6 +62,7 @@ router.post(
 
       const result = await analyzeTransactionsAI(
         extractedText,
+        undefined,
         mode,
         accountType
       );
