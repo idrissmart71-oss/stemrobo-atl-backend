@@ -1,25 +1,23 @@
 import { Request, Response } from "express";
-import { generateReportFromGemini } from "../services/geminiService";
+import { analyzeTransactionsAI } from "../services/geminiService";
 
 export const generateReport = async (req: Request, res: Response) => {
   try {
-    const { prompt } = req.body;
+    const { textData, mode, accountType } = req.body;
 
-    if (!prompt) {
-      return res.status(400).json({ error: "Prompt is required" });
+    if (!textData) {
+      return res.status(400).json({ error: "textData is required" });
     }
 
-    const aiResponse = await generateReportFromGemini(prompt);
+    const result = await analyzeTransactionsAI(
+      textData,
+      mode,
+      accountType
+    );
 
-    res.status(200).json({
-      success: true,
-      data: aiResponse,
-    });
+    res.json({ success: true, data: result });
   } catch (error) {
-    console.error("Gemini Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to generate report",
-    });
+    console.error(error);
+    res.status(500).json({ success: false, message: "AI processing failed" });
   }
 };
