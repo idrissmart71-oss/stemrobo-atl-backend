@@ -37,14 +37,12 @@ router.post(
       if (mimetype === "application/pdf") {
         console.log("📄 PDF detected — sending directly to Gemini");
 
+        const prompt =
+          "Analyze this uploaded bank statement PDF for ATL compliance. " +
+          "Extract transactions, categorize expenses, and flag audit risks.";
+
         const result = await analyzeTransactionsAI(
-          "Analyze this uploaded bank statement PDF for ATL compliance.",
-          {
-            inlineData: {
-              data: buffer.toString("base64"),
-              mimeType: "application/pdf"
-            }
-          },
+          prompt,
           mode,
           accountType
         );
@@ -65,7 +63,6 @@ router.post(
 
       const result = await analyzeTransactionsAI(
         extractedText,
-        undefined,
         mode,
         accountType
       );
