@@ -11,11 +11,15 @@
     "@google/generative-ai": "^0.5.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "multer": "^2.0.2",
+    "pdf-parse": "^2.4.5",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
+    "@types/multer": "^2.0.0",
     "@types/node": "^22.14.0",
     "typescript": "^5.8.2"
   }
