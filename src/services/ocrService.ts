@@ -1,32 +1,40 @@
-import { createRequire } from "module";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import Tesseract from "tesseract.js";
 
-const require = createRequire(import.meta.url);
-
-// Load pdf-parse safely (CommonJS → ESM compatible)
-const pdfParseLib = require("pdf-parse");
-const pdfParse =
-  typeof pdfParseLib === "function"
-    ? pdfParseLib
-    : pdfParseLib.default;
+// Required for Node.js
+GlobalWorkerOptions.workerSrc =
+  "node_modules/pdfjs-dist/build/pdf.worker.js";
 
 /**
- * Extract text from PDF or scanned document
+ * Extract text from PDF using pdfjs (stable for Node 22)
  */
 export const extractTextFromPDF = async (
   buffer: Buffer
 ): Promise<string> => {
-  // 1️⃣ Try normal PDF text extraction
-  const data = await pdfParse(buffer);
+  const loadingTask = getDocument({ data: buffer });
+  const pdf = await loadingTask.promise;
 
-  console.log("📄 PDF PARSE TEXT LENGTH:", data?.text?.length || 0);
-  console.log("📄 PDF PARSE SAMPLE:", data?.text?.slice(0, 500));
+  let fullText = "";
 
-  if (data?.text && data.text.trim().length > 100) {
-    return data.text;
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+
+    const strings = content.items
+      .map((item: any) => item.str)
+      .join(" ");
+
+    fullText += strings + "\n";
   }
 
-  // 2️⃣ Fallback OCR for scanned PDFs / images
+  console.log("📄 PDFJS TEXT LENGTH:", fullText.length);
+  console.log("📄 PDFJS SAMPLE:", fullText.slice(0, 500));
+
+  if (fullText.trim().length > 100) {
+    return fullText;
+  }
+
+  // Fallback OCR for scanned PDFs
   console.log("⚠️ Falling back to OCR");
 
   const ocrResult = await Tesseract.recognize(buffer, "eng");
