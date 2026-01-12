@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { analyzeTransactionsAI } from "../services/geminiService";
+import { analyzeTransactionsAI } from "../services/geminiService.js";
 
 export const generateReport = async (req: Request, res: Response) => {
   try {
