@@ -1,6 +1,6 @@
 import express from "express";
 import { upload } from "../middleware/upload.js";
-import { extractTextFromPDF } from "../services/ocrService.js";
+import { extractTextFromImage } from "../services/ocrService.js";
 import { analyzeTransactionsAI } from "../services/geminiService.js";
 import { generateReport } from "../controllers/reportController.js";
 
@@ -13,7 +13,7 @@ const router = express.Router();
 router.post("/", generateReport);
 
 /**
- * DOCUMENT UPLOAD (PDF / IMAGE OCR)
+ * DOCUMENT UPLOAD (PDF / IMAGE)
  * POST /generate-report/upload
  */
 router.post(
@@ -24,46 +24,54 @@ router.post(
       console.log("📥 Upload route hit");
 
       if (!req.file) {
-        console.error("❌ No file received");
-        return res.status(400).json({
-          error: "No file uploaded"
-        });
+        return res.status(400).json({ error: "No file uploaded" });
       }
 
-      console.log("📄 File received:", {
-        originalName: req.file.originalname,
-        mimeType: req.file.mimetype,
-        size: req.file.size
-      });
-
-      // OCR / PDF text extraction
-      const extractedText = await extractTextFromPDF(req.file.buffer);
-
-      if (!extractedText || extractedText.trim().length < 30) {
-        console.error("❌ OCR produced insufficient text");
-        return res.status(400).json({
-          error: "OCR failed or document unreadable"
-        });
-      }
-
-      console.log("✅ OCR successful, length:", extractedText.length);
-
+      const { mimetype, buffer } = req.file;
       const mode =
         req.body.mode === "Auditor" ? "Auditor" : "School";
-
       const accountType =
         req.body.accountType === "Current" ? "Current" : "Savings";
 
+      /* ================= PDF CASE ================= */
+      if (mimetype === "application/pdf") {
+        console.log("📄 PDF detected — sending directly to Gemini");
+
+        const result = await analyzeTransactionsAI(
+          "Analyze this uploaded bank statement PDF for ATL compliance.",
+          {
+            inlineData: {
+              data: buffer.toString("base64"),
+              mimeType: "application/pdf"
+            }
+          },
+          mode,
+          accountType
+        );
+
+        return res.json({ success: true, data: result });
+      }
+
+      /* ================= IMAGE CASE ================= */
+      console.log("🖼 Image detected — running OCR");
+
+      const extractedText = await extractTextFromImage(buffer);
+
+      if (!extractedText || extractedText.trim().length < 30) {
+        return res.status(400).json({
+          error: "Image OCR failed. Upload a clearer image."
+        });
+      }
+
       const result = await analyzeTransactionsAI(
         extractedText,
+        undefined,
         mode,
         accountType
       );
 
-      return res.json({
-        success: true,
-        data: result
-      });
+      return res.json({ success: true, data: result });
+
     } catch (error) {
       console.error("🔥 Document analysis error:", error);
       return res.status(500).json({
