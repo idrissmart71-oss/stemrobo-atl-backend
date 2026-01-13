@@ -9,10 +9,11 @@ export interface FileData {
   };
 }
 
-export interface GeminiResult {
-  transactions: any[];
-  observations: any[];
-  complianceChecklist: any[];
+interface RawTxn {
+  date: string | null;
+  narration: string | null;
+  amount: number | null;
+  direction: "Debit" | "Credit" | null;
 }
 
 /* ================= GEMINI INIT ================= */
@@ -21,139 +22,175 @@ const ai = new GoogleGenAI({
   apiKey: process.env.API_KEY!
 });
 
+/* ================= ATL GRANT MATRIX ================= */
+
+const GRANTS = {
+  Savings: {
+    T1: { total: 1200000, nonRecurring: 1000000, recurring: 200000 },
+    T2: { total: 1600000, nonRecurring: 1000000, recurring: 600000 },
+    T3: { total: 2000000, nonRecurring: 1000000, recurring: 1000000 }
+  },
+  Current: {
+    T1: { total: 1176000, nonRecurring: 976000, recurring: 200000 },
+    T2: { total: 1568000, nonRecurring: 976000, recurring: 592000 },
+    T3: { total: 1960000, nonRecurring: 976000, recurring: 984000 }
+  }
+};
+
+/* ================= HELPERS ================= */
+
+const has = (n: string, r: RegExp) => r.test(n.toLowerCase());
+
+const classifyDebit = (n: string) => {
+  if (has(n, /salary|honorarium|wages|stipend/)) return "Recurring";
+  if (has(n, /laptop|equipment|robot|printer|machine|hardware/)) return "Non-Recurring";
+  if (has(n, /maintenance|kit|workshop|amc|internet|electric|bank charge|min bal/))
+    return "Recurring";
+  if (has(n, /upi|cash|withdraw/)) return "Ineligible";
+  return "Ineligible";
+};
+
 /* ================= MAIN FUNCTION ================= */
 
 export const analyzeTransactionsAI = async (
   ocrText: string,
   fileData?: FileData,
-  mode: "Auditor" | "School" = "Auditor",
+  mode: "Auditor" | "School" = "School",
   accountType: "Savings" | "Current" = "Savings"
-): Promise<GeminiResult> => {
+) => {
 
-  /* ================= SYSTEM INSTRUCTION ================= */
-
+  /* ---------- GEMINI: RAW EXTRACTION ONLY ---------- */
   const systemInstruction = `
-You are a SENIOR GOVERNMENT FINANCIAL AUDITOR for
-NITI Aayog – Atal Tinkering Labs (ATL).
+Extract RAW bank transactions only.
+Do NOT analyze, classify, or summarize.
+Return ONLY explicit values.
+`;
 
-THIS IS A BANK STATEMENT ANALYSIS TASK.
+  const userPrompt = `
+Extract transactions from OCR text.
 
-ABSOLUTE RULES (NO EXCEPTIONS):
-1. Use ONLY information explicitly present in the document or OCR text.
-2. DO NOT guess, infer, estimate, or fabricate any value.
-3. If a value is missing or unclear → set it as null.
-4. If transactions exist → transactions array MUST NOT be empty.
-5. If NO transactions exist → return an EMPTY array.
-6. DO NOT summarize or explain.
-7. Return ONLY VALID JSON.
-
-================ ATL FUNDING RULES ================
-
-TRANCHE 1:
-Savings Account:
-- ₹12,00,000 total
-- ₹10,00,000 Non-Recurring
-- ₹2,00,000 Recurring
-
-Current Account:
-- ₹11,76,000 after TDS
-- ₹9,76,000 Non-Recurring
-- ₹2,00,000 Recurring
-
-TRANCHE 2 & 3:
-- Recurring only
-
-================ CLASSIFICATION RULES ================
-
-CREDITS:
-- Always "Grant Receipt"
-
-DEBITS:
-- Non-Recurring → equipment, machinery, furniture, laptops
-- Recurring → kits, workshops, AMC, maintenance, travel
-- Ineligible → personal, retail, stationery
-
-================ OUTPUT FORMAT (MANDATORY) ================
-
-Return JSON in EXACTLY this format:
-
+Return JSON:
 {
   "transactions": [
     {
-      "date": "string | null",
+      "date": "DD/MM/YYYY | null",
       "narration": "string | null",
       "amount": number | null,
-      "type": "Debit | Credit",
-      "category": "Non-Recurring | Recurring | Ineligible | Grant Receipt",
-      "tranche": "Tranche 1 | Tranche 2 | Tranche 3 | Unknown",
-      "financialYear": "YYYY-YY | null",
-      "riskScore": "LOW | MEDIUM | HIGH",
-      "verificationStatus": "Verified | Missing | Doubtful",
-      "isFlagged": boolean,
-      "flagReason": "string | null"
+      "direction": "Debit | Credit"
     }
-  ],
-  "observations": [],
-  "complianceChecklist": []
+  ]
 }
 
-Mode: ${mode}
-Account Type: ${accountType}
-`;
-
-  /* ================= USER PROMPT ================= */
-
-  const userPrompt = `
-STEP 1:
-Read the OCR text below and identify ONLY clear transaction rows
-(date + narration + debit/credit amount).
-
-STEP 2:
-Convert each row into a structured transaction.
-
-STEP 3:
-Apply ATL compliance rules.
-
-IMPORTANT:
-- DO NOT create imaginary transactions.
-- Preserve exact amounts and dates as written.
-
-================ OCR TEXT =================
+OCR TEXT:
 ${ocrText}
 `;
-
-  /* ================= CONTENT STRUCTURE ================= */
 
   const contents = fileData
     ? [
         { role: "user", parts: [fileData] },
         { role: "user", parts: [{ text: userPrompt }] }
       ]
-    : [
-        { role: "user", parts: [{ text: userPrompt }] }
-      ];
-
-  /* ================= GEMINI CALL ================= */
+    : [{ role: "user", parts: [{ text: userPrompt }] }];
 
   try {
     const response = await ai.models.generateContent({
       model: "models/gemini-2.5-flash",
       contents,
-      config: {
-        systemInstruction
-      }
+      config: { systemInstruction }
     });
 
-    const raw = response.text?.trim();
+    const raw = JSON.parse(response.text || "{}");
 
-    if (!raw) {
-      throw new Error("Empty Gemini response");
+    let nonRecurringSpent = 0;
+    let recurringSpent = 0;
+
+    const transactions = (raw.transactions || []).map((t: RawTxn) => {
+      const narration = t.narration || "";
+      let category = "Ineligible";
+
+      if (t.direction === "Credit") {
+        if (has(narration, /interest/))
+          category = "Interest (Refund to Bharat Kosh)";
+        else category = "Grant Receipt";
+      } else {
+        category = classifyDebit(narration);
+      }
+
+      if (category === "Non-Recurring") nonRecurringSpent += t.amount || 0;
+      if (category === "Recurring") recurringSpent += t.amount || 0;
+
+      return {
+        id: crypto.randomUUID(),
+        date: t.date || "N/A",
+        narration,
+        amount: t.amount || 0,
+        type: t.direction,
+        category,
+        tranche: "Auto",
+        financialYear: "2024-25",
+        riskScore: category === "Ineligible" ? "HIGH" : "LOW",
+        verificationStatus: "Verified",
+        gstNo: has(narration, /gst/) ? "Present" : null,
+        voucherNo: null
+      };
+    });
+
+    /* ---------- TRANCHE DETECTION ---------- */
+
+    let tranche = "T1";
+    if (recurringSpent > GRANTS[accountType].T1.recurring) tranche = "T2";
+    if (recurringSpent > GRANTS[accountType].T2.recurring) tranche = "T3";
+
+    const grant = GRANTS[accountType][tranche];
+
+    /* ---------- OBSERVATIONS ---------- */
+
+    const observations = [];
+
+    if (nonRecurringSpent > grant.nonRecurring) {
+      observations.push({
+        type: "NON_RECURRING_OVERSPEND",
+        severity: "HIGH",
+        observation: "Non-Recurring exceeds permitted limit",
+        recommendation: "Reclassify or refund excess"
+      });
     }
 
-    return JSON.parse(raw);
+    if (recurringSpent > grant.recurring) {
+      observations.push({
+        type: "RECURRING_OVERSPEND",
+        severity: "HIGH",
+        observation: "Recurring exceeds permitted limit",
+        recommendation: "Adjust expenses"
+      });
+    }
+
+    /* ---------- FINAL RESPONSE ---------- */
+
+    return {
+      transactions,
+      observations,
+      complianceChecklist: [
+        {
+          label: "Grant Received",
+          status: "Compliant",
+          comment: `₹${grant.total} (${accountType}, ${tranche})`
+        },
+        {
+          label: "Non-Recurring Utilization",
+          status: nonRecurringSpent <= grant.nonRecurring ? "Compliant" : "Non-Compliant",
+          comment: `₹${nonRecurringSpent} / ₹${grant.nonRecurring}`
+        },
+        {
+          label: "Recurring Utilization",
+          status: recurringSpent <= grant.recurring ? "Compliant" : "Non-Compliant",
+          comment: `₹${recurringSpent} / ₹${grant.recurring}`
+        }
+      ]
+    };
 
   } catch (error) {
-    console.error("🔥 Gemini analysis failed:", error);
+    console.error("🔥 Gemini failed:", error);
     return {
       transactions: [],
       observations: [],
