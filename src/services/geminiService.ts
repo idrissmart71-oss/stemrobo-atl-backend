@@ -1,4 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
+type TrancheKey = "T1" | "T2" | "T3";
+
 
 /* ================= INTERFACES ================= */
 
@@ -137,11 +139,12 @@ ${ocrText}
 
     /* ---------- TRANCHE DETECTION ---------- */
 
-    let tranche = "T1";
+    let tranche: TrancheKey = "T1";
     if (recurringSpent > GRANTS[accountType].T1.recurring) tranche = "T2";
     if (recurringSpent > GRANTS[accountType].T2.recurring) tranche = "T3";
-
+    
     const grant = GRANTS[accountType][tranche];
+
 
     /* ---------- OBSERVATIONS ---------- */
 
