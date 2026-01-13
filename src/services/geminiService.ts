@@ -43,9 +43,7 @@ Analyze this bank statement and return structured JSON:
     : prompt + "\n\nData:\n" + textData;
 
     const response = await ai.models.generateContent({
-      model: fileData
-        ? "models/gemini-1.0-pro-vision"
-        : "models/gemini-1.0-pro",
+      model: "models/gemini-2.5-flash",
       contents,
       config: {
         systemInstruction,
