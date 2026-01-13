@@ -127,7 +127,13 @@ ${ocrText}
       throw new Error("Gemini unavailable after retries");
     }
 
-    const raw = JSON.parse(response.text || "{}");
+    const cleanedText = response.text
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+      
+    const raw = JSON.parse(cleanedText || "{}");
+
 
     /* ---------- APPLY ATL RULES ---------- */
 
