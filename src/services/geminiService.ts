@@ -1,9 +1,4 @@
 import { GoogleGenAI } from "@google/genai";
-type TrancheKey = "T1" | "T2" | "T3";
-const sleep = (ms: number) =>
-  new Promise(resolve => setTimeout(resolve, ms));
-
-
 
 /* ================= INTERFACES ================= */
 
@@ -20,6 +15,8 @@ interface RawTxn {
   amount: number | null;
   direction: "Debit" | "Credit" | null;
 }
+
+type TrancheKey = "T1" | "T2" | "T3";
 
 /* ================= GEMINI INIT ================= */
 
@@ -44,14 +41,17 @@ const GRANTS = {
 
 /* ================= HELPERS ================= */
 
+const sleep = (ms: number) =>
+  new Promise(resolve => setTimeout(resolve, ms));
+
 const has = (n: string, r: RegExp) => r.test(n.toLowerCase());
 
 const classifyDebit = (n: string) => {
   if (has(n, /salary|honorarium|wages|stipend/)) return "Recurring";
-  if (has(n, /laptop|equipment|robot|printer|machine|hardware/)) return "Non-Recurring";
+  if (has(n, /laptop|equipment|robot|printer|machine|hardware/))
+    return "Non-Recurring";
   if (has(n, /maintenance|kit|workshop|amc|internet|electric|bank charge|min bal/))
     return "Recurring";
-  if (has(n, /upi|cash|withdraw/)) return "Ineligible";
   return "Ineligible";
 };
 
@@ -65,14 +65,15 @@ export const analyzeTransactionsAI = async (
 ) => {
 
   /* ---------- GEMINI: RAW EXTRACTION ONLY ---------- */
+
   const systemInstruction = `
-Extract RAW bank transactions only.
-Do NOT analyze, classify, or summarize.
-Return ONLY explicit values.
+Extract ONLY raw bank transactions.
+Do NOT classify, analyze, or infer.
+Return ONLY explicit values present in the document.
 `;
 
   const userPrompt = `
-Extract transactions from OCR text.
+Extract bank transactions from the text.
 
 Return JSON:
 {
@@ -97,40 +98,38 @@ ${ocrText}
       ]
     : [{ role: "user", parts: [{ text: userPrompt }] }];
 
-    let response;
+  try {
+    /* ---------- GEMINI CALL WITH RETRY ---------- */
 
-    const models = [
-      "models/gemini-2.5-flash",
-      "models/gemini-2.0-flash"
-    ];
-    
+    let response: any = null;
+    const models = ["models/gemini-2.5-flash", "models/gemini-2.0-flash"];
+
     for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        for (const model of models) {
-          try {
-            response = await ai.models.generateContent({
-              model,
-              contents,
-              config: { systemInstruction }
-            });
-            break;
-          } catch (err: any) {
-            if (err?.status !== 503) throw err;
-          }
+      for (const model of models) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents,
+            config: { systemInstruction }
+          });
+
+          if (response?.text) break;
+        } catch (err: any) {
+          if (err?.status !== 503) throw err;
         }
-    
-        if (response) break;
-    
-      } catch (err: any) {
-        if (attempt === 3) throw err;
-        await sleep(1000 * attempt); // exponential backoff
       }
+
+      if (response?.text) break;
+      await sleep(1000 * attempt);
     }
-    
+
     if (!response?.text) {
-      throw new Error("Gemini returned empty response after retries");
-    }    
+      throw new Error("Gemini unavailable after retries");
+    }
+
     const raw = JSON.parse(response.text || "{}");
+
+    /* ---------- APPLY ATL RULES ---------- */
 
     let nonRecurringSpent = 0;
     let recurringSpent = 0;
@@ -166,14 +165,14 @@ ${ocrText}
       };
     });
 
-    /* ---------- TRANCHE DETECTION ---------- */
+    /* ---------- DETERMINE TRANCHE ---------- */
 
     let tranche: TrancheKey = "T1";
+
     if (recurringSpent > GRANTS[accountType].T1.recurring) tranche = "T2";
     if (recurringSpent > GRANTS[accountType].T2.recurring) tranche = "T3";
 
     const grant = GRANTS[accountType][tranche];
-
 
     /* ---------- OBSERVATIONS ---------- */
 
@@ -183,7 +182,7 @@ ${ocrText}
       observations.push({
         type: "NON_RECURRING_OVERSPEND",
         severity: "HIGH",
-        observation: "Non-Recurring exceeds permitted limit",
+        observation: "Non-Recurring exceeds allowed limit",
         recommendation: "Reclassify or refund excess"
       });
     }
@@ -192,7 +191,7 @@ ${ocrText}
       observations.push({
         type: "RECURRING_OVERSPEND",
         severity: "HIGH",
-        observation: "Recurring exceeds permitted limit",
+        observation: "Recurring exceeds allowed limit",
         recommendation: "Adjust expenses"
       });
     }
