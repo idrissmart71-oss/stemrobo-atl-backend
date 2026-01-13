@@ -54,7 +54,20 @@ Account Type: ${accountType}
 
   /* ---------- USER PROMPT ---------- */
   const userPrompt = `
-STEP 1: Read the attached bank statement and extract ALL transactions
+STEP 1: Read the attached bank statement and You are NOT allowed to invent or infer data.
+
+The text below is OCR output from a bank statement.
+It may be poorly formatted.
+
+Your task:
+1. Identify ONLY rows that clearly represent transactions.
+2. Use ONLY values explicitly present in the text.
+3. If a value is missing or unclear, set it as null.
+4. DO NOT estimate, assume, or infer amounts or dates.
+5. DO NOT create transactions that are not present.
+
+Return transactions EXACTLY as written in the OCR text.
+
 (date, narration, debit, credit).
 
 STEP 2: Convert them into structured records.
