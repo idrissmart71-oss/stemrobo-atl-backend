@@ -1,5 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 type TrancheKey = "T1" | "T2" | "T3";
+const sleep = (ms: number) =>
+  new Promise(resolve => setTimeout(resolve, ms));
+
 
 
 /* ================= INTERFACES ================= */
@@ -94,13 +97,39 @@ ${ocrText}
       ]
     : [{ role: "user", parts: [{ text: userPrompt }] }];
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "models/gemini-2.5-flash",
-      contents,
-      config: { systemInstruction }
-    });
+    let response;
 
+    const models = [
+      "models/gemini-2.5-flash",
+      "models/gemini-2.0-flash"
+    ];
+    
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        for (const model of models) {
+          try {
+            response = await ai.models.generateContent({
+              model,
+              contents,
+              config: { systemInstruction }
+            });
+            break;
+          } catch (err: any) {
+            if (err?.status !== 503) throw err;
+          }
+        }
+    
+        if (response) break;
+    
+      } catch (err: any) {
+        if (attempt === 3) throw err;
+        await sleep(1000 * attempt); // exponential backoff
+      }
+    }
+    
+    if (!response?.text) {
+      throw new Error("Gemini returned empty response after retries");
+    }    
     const raw = JSON.parse(response.text || "{}");
 
     let nonRecurringSpent = 0;
@@ -142,7 +171,7 @@ ${ocrText}
     let tranche: TrancheKey = "T1";
     if (recurringSpent > GRANTS[accountType].T1.recurring) tranche = "T2";
     if (recurringSpent > GRANTS[accountType].T2.recurring) tranche = "T3";
-    
+
     const grant = GRANTS[accountType][tranche];
 
 
