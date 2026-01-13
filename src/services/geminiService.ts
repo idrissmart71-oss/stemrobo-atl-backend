@@ -42,14 +42,16 @@ Analyze this bank statement and return structured JSON:
       }
     : prompt + "\n\nData:\n" + textData;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-1.5-pro",
-    contents,
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json"
-    }
-  });
+    const response = await ai.models.generateContent({
+      model: fileData
+        ? "models/gemini-1.0-pro-vision"
+        : "models/gemini-1.0-pro",
+      contents,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json"
+      }
+    });
 
   return JSON.parse(response.text || "{}");
 };
