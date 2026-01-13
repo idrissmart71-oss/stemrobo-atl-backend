@@ -176,12 +176,29 @@ ${ocrText}
             },
             observations: {
               type: Type.ARRAY,
-              items: { type: Type.OBJECT }
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  type: { type: Type.STRING },
+                  severity: { type: Type.STRING },
+                  observation: { type: Type.STRING },
+                  recommendation: { type: Type.STRING }
+                }
+              }
             },
+            
             complianceChecklist: {
               type: Type.ARRAY,
-              items: { type: Type.OBJECT }
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  label: { type: Type.STRING },
+                  status: { type: Type.STRING },
+                  comment: { type: Type.STRING }
+                }
+              }
             }
+            
           }
         }
       }
