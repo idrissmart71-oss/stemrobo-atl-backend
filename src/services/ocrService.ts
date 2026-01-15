@@ -2,10 +2,26 @@ import { ImageAnnotatorClient } from "@google-cloud/vision";
 
 /* ================= GOOGLE VISION CLIENT ================= */
 
-const visionClient = new ImageAnnotatorClient({
-  credentials: JSON.parse(
+let credentials;
+try {
+  // Try parsing as JSON first
+  credentials = JSON.parse(
     process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}"
-  )
+  );
+} catch (parseError) {
+  // If that fails, try base64 decoding
+  try {
+    const base64Creds = process.env.GOOGLE_APPLICATION_CREDENTIALS_BASE64 || "";
+    const decoded = Buffer.from(base64Creds, 'base64').toString('utf8');
+    credentials = JSON.parse(decoded);
+  } catch (base64Error) {
+    console.error("🔥 Failed to parse Google credentials:", base64Error);
+    credentials = {};
+  }
+}
+
+const visionClient = new ImageAnnotatorClient({
+  credentials
 });
 
 /* ================= OCR FUNCTION ================= */
