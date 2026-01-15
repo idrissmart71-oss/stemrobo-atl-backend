@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export interface FileData {
   inlineData: {
@@ -13,7 +13,7 @@ export const analyzeTransactionsAI = async (
   mode: "Auditor" | "School" = "School",
   accountType: "Savings" | "Current" = "Savings"
 ) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+  const genAI = new GoogleGenerativeAI(process.env.API_KEY!);
 
   const fundingInfo = accountType === "Current" 
     ? `
@@ -92,24 +92,29 @@ ${rawText || "Refer to uploaded document"}
 Return ONLY the JSON structure specified in system instructions.
 `;
 
-  const contents = fileData
-    ? { parts: [fileData, { text: prompt }] }
-    : prompt;
-
   let response;
 
   // Retry logic with exponential backoff
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      response = await ai.models.generateContent({
-        model: "models/gemini-2.0-flash-exp",
-        contents,
-        config: { 
-          systemInstruction,
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.0-flash",
+        systemInstruction,
+        generationConfig: {
           temperature: 0.1,
           maxOutputTokens: 8000
         }
       });
+      
+      if (fileData) {
+        response = await model.generateContent([
+          fileData,
+          { text: prompt }
+        ]);
+      } else {
+        response = await model.generateContent(prompt);
+      }
+      
       break;
     } catch (err: any) {
       console.error(`Attempt ${attempt} failed:`, err.message);
@@ -118,7 +123,7 @@ Return ONLY the JSON structure specified in system instructions.
     }
   }
 
-  const rawResponse = response!.text!;
+  const rawResponse = response!.response.text();
   console.log("📝 Raw Gemini response:", rawResponse.substring(0, 500));
 
   const cleaned = rawResponse
