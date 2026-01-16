@@ -21,3 +21,7 @@ dist
 *.njsproj
 *.sln
 *.sw?
+*.json
+package.json
+package-lock.json
+tsconfig.json
