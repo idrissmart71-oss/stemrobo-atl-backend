@@ -98,7 +98,7 @@ Return ONLY the JSON structure specified in system instructions.
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
+        model: "gemini-2.0-flash",
         systemInstruction,
         generationConfig: {
           temperature: 0.1,
