@@ -14,9 +14,9 @@ app.use(cors({
   allowedHeaders: ["Content-Type"]
 }));
 
-// Body parser
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+// Body parser with increased limits for text
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Health check
 app.get("/health", (_req, res) => {
@@ -24,13 +24,12 @@ app.get("/health", (_req, res) => {
     status: "OK",
     timestamp: new Date().toISOString(),
     env: {
-      hasApiKey: !!process.env.API_KEY,
-      hasGoogleCreds: !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+      hasApiKey: !!process.env.API_KEY
     }
   });
 });
 
-// Routes
+// Routes - single text-based endpoint
 app.use("/generate-report", reportRoutes);
 
 // Error handling middleware
@@ -52,5 +51,4 @@ app.listen(PORT, () => {
   console.log(`✅ Backend running on port ${PORT}`);
   console.log(`📍 API URL: http://localhost:${PORT}`);
   console.log(`🔑 API Key configured: ${!!process.env.API_KEY}`);
-  console.log(`🔐 Google Credentials configured: ${!!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON}`);
 });
