@@ -39,23 +39,20 @@ CLASSIFICATION RULES:
 6. INELIGIBLE → Bank charges, ATM fees, minimum balance charges, GST on bank charges, personal expenses
 
 CRITICAL INSTRUCTIONS:
-- Extract EVERY SINGLE transaction from the statement
-- DO NOT skip any lines
-- DO NOT stop early
-- DO NOT summarize
-- Process ALL dates from start to end
-- If you see transactions from 2020 to 2025, extract ALL of them
+- Process transactions in BATCHES OF 20 maximum per response
+- Extract complete information for each transaction
+- Ensure valid JSON format
+- Close all JSON brackets properly
 
-OUTPUT FORMAT:
-Return ONLY a valid JSON object (no markdown, no backticks):
+OUTPUT FORMAT - STRICT JSON:
 {
   "extractedTransactions": [
     {
       "date": "DD-MM-YYYY",
-      "narration": "Transaction description",
+      "narration": "Brief description (max 100 chars)",
       "amount": 1000,
-      "direction": "DEBIT" or "CREDIT",
-      "intent": "CAPITAL" | "RECURRING" | "INTEREST" | "SALARY" | "GRANT" | "INELIGIBLE",
+      "direction": "DEBIT",
+      "intent": "CAPITAL",
       "gstNo": null,
       "voucherNo": null
     }
@@ -63,8 +60,8 @@ Return ONLY a valid JSON object (no markdown, no backticks):
 }
 `;
 
-  // Split large text into chunks if needed
-  const MAX_CHUNK_SIZE = 12000; // characters
+  // Split large text into smaller chunks (reduce chunk size)
+  const MAX_CHUNK_SIZE = 6000; // Reduced from 12000 to get smaller batches
   const chunks: string[] = [];
   
   if (rawText.length > MAX_CHUNK_SIZE) {
@@ -100,17 +97,16 @@ Return ONLY a valid JSON object (no markdown, no backticks):
     console.log(`📊 Processing chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
     
     const prompt = `
-Extract ALL transactions from this bank statement ${chunks.length > 1 ? `(Part ${i + 1} of ${chunks.length})` : ''}.
+Extract transactions from this bank statement section ${chunks.length > 1 ? `(Part ${i + 1} of ${chunks.length})` : ''}.
 
-IMPORTANT: Extract EVERY transaction, do not skip any.
+LIMIT: Extract maximum 20-25 transactions to ensure complete JSON output.
 
 Account Type: ${accountType}
-Mode: ${mode}
 
-Bank Statement:
+Bank Statement Section:
 ${chunk}
 
-Return ONLY the JSON object. No markdown. No backticks. Just JSON.
+Return valid JSON with complete closing brackets. No truncation.
 `;
 
     let response;
@@ -119,12 +115,14 @@ Return ONLY the JSON object. No markdown. No backticks. Just JSON.
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const model = genAI.getGenerativeModel({ 
-          model: "gemini-2.5-flash",
+          model: "gemini-2.0-flash-exp",
           systemInstruction,
           generationConfig: {
             temperature: 0.1,
-            maxOutputTokens: 16000,
-            responseMimeType: "application/json"
+            maxOutputTokens: 8000, // Reduced to ensure completion
+            responseMimeType: "application/json",
+            topP: 0.95,
+            topK: 40
           }
         });
         
@@ -133,7 +131,7 @@ Return ONLY the JSON object. No markdown. No backticks. Just JSON.
       } catch (err: any) {
         console.error(`Chunk ${i + 1}, Attempt ${attempt} failed:`, err.message);
         if (attempt === 3) throw err;
-        await new Promise(r => setTimeout(r, attempt * 1000));
+        await new Promise(r => setTimeout(r, attempt * 2000));
       }
     }
 
@@ -164,18 +162,47 @@ Return ONLY the JSON object. No markdown. No backticks. Just JSON.
       
     } catch (parseError: any) {
       console.error(`🔥 Chunk ${i + 1} JSON Parse Error:`, parseError.message);
-      console.error("Raw response (first 500):", cleaned.substring(0, 500));
       
-      // Try salvage
+      // Advanced salvage - try to fix common JSON issues
       try {
-        const salvaged = cleaned + ']}';
-        const parsed = JSON.parse(salvaged);
+        // Try to fix incomplete JSON
+        let fixed = cleaned;
+        
+        // Count opening and closing brackets
+        const openBrackets = (fixed.match(/\[/g) || []).length;
+        const closeBrackets = (fixed.match(/\]/g) || []).length;
+        const openBraces = (fixed.match(/\{/g) || []).length;
+        const closeBraces = (fixed.match(/\}/g) || []).length;
+        
+        console.log(`Brackets: [ ${openBrackets}/${closeBrackets} ]  { ${openBraces}/${closeBraces} }`);
+        
+        // Remove any incomplete last object
+        const lastComma = fixed.lastIndexOf(',');
+        const lastCloseBrace = fixed.lastIndexOf('}');
+        
+        if (lastComma > lastCloseBrace) {
+          // Incomplete object, remove it
+          fixed = fixed.substring(0, lastComma);
+        }
+        
+        // Add missing closing brackets
+        for (let j = 0; j < openBrackets - closeBrackets; j++) {
+          fixed += ']';
+        }
+        for (let j = 0; j < openBraces - closeBraces; j++) {
+          fixed += '}';
+        }
+        
+        console.log(`🔧 Attempting to fix JSON...`);
+        const parsed = JSON.parse(fixed);
+        
         if (parsed.extractedTransactions && parsed.extractedTransactions.length > 0) {
-          console.log(`⚠️ Chunk ${i + 1}: Salvaged ${parsed.extractedTransactions.length} transactions`);
+          console.log(`⚠️ Chunk ${i + 1}: Salvaged ${parsed.extractedTransactions.length} transactions (fixed JSON)`);
           allTransactions.push(...parsed.extractedTransactions);
         }
-      } catch {
-        console.error(`❌ Chunk ${i + 1}: Could not salvage`);
+      } catch (salvageError) {
+        console.error(`❌ Chunk ${i + 1}: Could not salvage, skipping`);
+        // Continue to next chunk
       }
     }
   }
