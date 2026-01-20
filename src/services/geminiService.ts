@@ -38,16 +38,16 @@ CLASSIFICATION RULES:
 5. GRANT → Grant receipt, fund transfer from NITI Aayog, cash deposits for ATL
 6. INELIGIBLE → Bank charges, ATM fees, minimum balance charges, GST on bank charges, personal expenses
 
-IMPORTANT RULES:
-- Extract EVERY transaction from the statement
-- DO NOT skip any transactions
+CRITICAL INSTRUCTIONS:
+- Extract EVERY SINGLE transaction from the statement
+- DO NOT skip any lines
+- DO NOT stop early
 - DO NOT summarize
-- DO NOT calculate totals
-- Include date if visible (format: DD-MM-YYYY)
-- For bank statements, extract dates, narrations, and amounts carefully
+- Process ALL dates from start to end
+- If you see transactions from 2020 to 2025, extract ALL of them
 
 OUTPUT FORMAT:
-Return ONLY a valid JSON object (no markdown, no backticks, no explanation):
+Return ONLY a valid JSON object (no markdown, no backticks):
 {
   "extractedTransactions": [
     {
@@ -63,86 +63,128 @@ Return ONLY a valid JSON object (no markdown, no backticks, no explanation):
 }
 `;
 
-  const prompt = `
-Extract ALL transactions from this bank statement text.
+  // Split large text into chunks if needed
+  const MAX_CHUNK_SIZE = 12000; // characters
+  const chunks: string[] = [];
+  
+  if (rawText.length > MAX_CHUNK_SIZE) {
+    console.log(`📄 Large document detected (${rawText.length} chars), splitting into chunks...`);
+    
+    // Split by lines to avoid breaking transactions
+    const lines = rawText.split('\n');
+    let currentChunk = '';
+    
+    for (const line of lines) {
+      if ((currentChunk + line).length > MAX_CHUNK_SIZE && currentChunk.length > 0) {
+        chunks.push(currentChunk);
+        currentChunk = line + '\n';
+      } else {
+        currentChunk += line + '\n';
+      }
+    }
+    
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+    
+    console.log(`📄 Split into ${chunks.length} chunks`);
+  } else {
+    chunks.push(rawText);
+  }
+
+  // Process each chunk
+  const allTransactions: any[] = [];
+  
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    console.log(`📊 Processing chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
+    
+    const prompt = `
+Extract ALL transactions from this bank statement ${chunks.length > 1 ? `(Part ${i + 1} of ${chunks.length})` : ''}.
+
+IMPORTANT: Extract EVERY transaction, do not skip any.
 
 Account Type: ${accountType}
 Mode: ${mode}
 
 Bank Statement:
-${rawText}
+${chunk}
 
-Return ONLY the JSON object. No markdown formatting. No backticks. Just the JSON.
+Return ONLY the JSON object. No markdown. No backticks. Just JSON.
 `;
 
-  let response;
+    let response;
 
-  // Retry logic with exponential backoff
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
-        systemInstruction,
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 16000, // Increased from 8000
-          responseMimeType: "application/json" // Force JSON response
-        }
-      });
-      
-      response = await model.generateContent(prompt);
-      break;
-    } catch (err: any) {
-      console.error(`Attempt ${attempt} failed:`, err.message);
-      if (attempt === 3) throw err;
-      await new Promise(r => setTimeout(r, attempt * 1000));
-    }
-  }
-
-  const rawResponse = response!.response.text();
-  console.log("📝 Raw Gemini response:", rawResponse.substring(0, 500));
-
-  // Clean the response - remove markdown and extra text
-  let cleaned = rawResponse
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
-
-  // If response starts with explanation, find the JSON
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    cleaned = jsonMatch[0];
-  }
-
-  try {
-    const parsed = JSON.parse(cleaned);
-    
-    if (!parsed.extractedTransactions) {
-      console.error("❌ Missing extractedTransactions in response");
-      console.error("Parsed object keys:", Object.keys(parsed));
-      throw new Error("Missing extractedTransactions in response");
-    }
-
-    console.log(`✅ Successfully parsed ${parsed.extractedTransactions.length} transactions`);
-    return parsed;
-  } catch (parseError: any) {
-    console.error("🔥 JSON Parse Error:", parseError.message);
-    console.error("Raw response (first 1000 chars):", cleaned.substring(0, 1000));
-    console.error("Raw response (last 500 chars):", cleaned.substring(cleaned.length - 500));
-    
-    // Try to salvage partial data
-    try {
-      // If JSON is truncated, try to close it
-      const salvaged = cleaned + ']}';
-      const parsed = JSON.parse(salvaged);
-      if (parsed.extractedTransactions && parsed.extractedTransactions.length > 0) {
-        console.log("⚠️ Salvaged partial data:", parsed.extractedTransactions.length, "transactions");
-        return parsed;
+    // Retry logic
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const model = genAI.getGenerativeModel({ 
+          model: "gemini-2.0-flash-exp",
+          systemInstruction,
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 16000,
+            responseMimeType: "application/json"
+          }
+        });
+        
+        response = await model.generateContent(prompt);
+        break;
+      } catch (err: any) {
+        console.error(`Chunk ${i + 1}, Attempt ${attempt} failed:`, err.message);
+        if (attempt === 3) throw err;
+        await new Promise(r => setTimeout(r, attempt * 1000));
       }
-    } catch {
-      // Salvage attempt failed
     }
-    
-    throw new Error("Failed to parse AI response. The document might be too large. Try splitting it into smaller sections.");
+
+    const rawResponse = response!.response.text();
+    console.log(`📝 Chunk ${i + 1} response (first 200 chars):`, rawResponse.substring(0, 200));
+
+    // Clean the response
+    let cleaned = rawResponse
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      cleaned = jsonMatch[0];
+    }
+
+    try {
+      const parsed = JSON.parse(cleaned);
+      
+      if (!parsed.extractedTransactions) {
+        console.error(`❌ Chunk ${i + 1}: Missing extractedTransactions`);
+        continue;
+      }
+
+      console.log(`✅ Chunk ${i + 1}: Parsed ${parsed.extractedTransactions.length} transactions`);
+      allTransactions.push(...parsed.extractedTransactions);
+      
+    } catch (parseError: any) {
+      console.error(`🔥 Chunk ${i + 1} JSON Parse Error:`, parseError.message);
+      console.error("Raw response (first 500):", cleaned.substring(0, 500));
+      
+      // Try salvage
+      try {
+        const salvaged = cleaned + ']}';
+        const parsed = JSON.parse(salvaged);
+        if (parsed.extractedTransactions && parsed.extractedTransactions.length > 0) {
+          console.log(`⚠️ Chunk ${i + 1}: Salvaged ${parsed.extractedTransactions.length} transactions`);
+          allTransactions.push(...parsed.extractedTransactions);
+        }
+      } catch {
+        console.error(`❌ Chunk ${i + 1}: Could not salvage`);
+      }
+    }
   }
+
+  console.log(`✅ Total transactions extracted: ${allTransactions.length}`);
+
+  if (allTransactions.length === 0) {
+    throw new Error("No transactions could be extracted. Please check the document format.");
+  }
+
+  return { extractedTransactions: allTransactions };
 };
