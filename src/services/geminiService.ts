@@ -87,8 +87,8 @@ OUTPUT FORMAT:
 INTENT values: CAPITAL, RECURRING, INTEREST, GRANT, INELIGIBLE
 `;
 
-  // Split large text into smaller chunks
-  const MAX_CHUNK_SIZE = 5000; // Further reduced to process more carefully
+  // Split large text into very small chunks to ensure completion
+  const MAX_CHUNK_SIZE = 3000; // Much smaller - about 10-15 transactions per chunk
   const chunks: string[] = [];
   
   if (rawText.length > MAX_CHUNK_SIZE) {
@@ -124,39 +124,38 @@ INTENT values: CAPITAL, RECURRING, INTEREST, GRANT, INELIGIBLE
     console.log(`📊 Processing chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
     
     const prompt = `
-Classify transactions from bank statement - ${chunks.length > 1 ? `Part ${i + 1}/${chunks.length}` : 'Complete'}.
+Extract and classify transactions from bank statement.
 
-IMPORTANT CLASSIFICATION:
-- Computer/Laptop/Printer/3D Printer/Robot/Equipment/Furniture → CAPITAL
-- Salary/Honorarium/Wages → RECURRING  
-- Workshop/Training materials/Kits → RECURRING
-- Consumables/Stationery → RECURRING
+Part ${i + 1} of ${chunks.length}
+
+Rules:
+- Computer/Equipment/Furniture/3D Printer → CAPITAL
+- Salary/Wages/Honorarium → RECURRING
+- Workshop/Training/Consumables → RECURRING
 - Interest credit → INTEREST
-- Bank charges → INELIGIBLE
+- STEMROBO payment → RECURRING (operational expense)
+- Individual vendor payments → Check narration (equipment=CAPITAL, services=RECURRING)
+- Bank charges/SMS fees → INELIGIBLE
 
-Account: ${accountType}
-
-Statement text:
+Statement:
 ${chunk}
 
-Extract 15-25 transactions with ACCURATE classification. Ensure COMPLETE valid JSON with all closing brackets.
-DO NOT truncate. Process ALL dates including 2024 and 2025 if present.
+Extract 8-12 transactions maximum. Return COMPLETE JSON with ALL closing brackets.
 `;
 
     let response;
 
-    // Retry logic
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const model = genAI.getGenerativeModel({ 
           model: "gemini-2.5-flash",
           systemInstruction,
           generationConfig: {
-            temperature: 0.15, // Lower for more consistent classification
-            maxOutputTokens: 6000, // Further reduced to ensure completion
+            temperature: 0.1,
+            maxOutputTokens: 4000, // Very small to force completion
             responseMimeType: "application/json",
-            topP: 0.9,
-            topK: 40
+            topP: 0.85,
+            topK: 30
           }
         });
         
