@@ -30,50 +30,51 @@ You are a financial transaction classifier for NITI Aayog ATL (Atal Tinkering La
 FUNDING STRUCTURE:
 ${fundingInfo}
 
-CRITICAL CLASSIFICATION RULES FOR GFR 12-A:
+CRITICAL CLASSIFICATION RULES:
 
-**GRANT GENERAL (RECURRING)** - Revenue/Operational Expenses:
-- Salary, wages, honorarium for staff
-- Workshops, training programs
-- Consumables, stationery, office supplies
-- Travel expenses for ATL activities
-- Maintenance and repairs
-- Utilities (electricity, internet)
-- Event expenses
-- Tinkering kits and materials
+**CAPITAL (Non-Recurring)** - One-time purchases for lab setup:
+EQUIPMENT KEYWORDS: computer, laptop, desktop, printer, 3D printer, robot, drone, Arduino, Raspberry Pi, electronics kit, sensor, motor, CNC, lathe, drill, microscope, projector, camera, VR headset
+FURNITURE KEYWORDS: table, chair, desk, cabinet, shelf, rack, workbench, storage
+INFRASTRUCTURE KEYWORDS: AC, air conditioner, fan, exhaust, electrical work, wiring, flooring, ceiling, paint
+SOFTWARE KEYWORDS: license (perpetual), software purchase, CAD software, design software
+Examples: "Computer purchase 50000", "3D Printer 75000", "Furniture for lab 30000", "Robotics kit 25000"
 
-**CAPITAL ASSETS (NON-RECURRING)** - One-time Capital Purchases:
-- Equipment: 3D printers, computers, laptops, robotics kits
-- Furniture: tables, chairs, storage units
-- Infrastructure: lab setup, workbenches
-- Tools and machinery
-- Software licenses (perpetual)
-- Electronics and hardware
+**RECURRING (Operational Expenses)** - Regular operational costs:
+SALARY KEYWORDS: salary, wage, honorarium, stipend, payment to mentor, payment to instructor, staff payment, teacher, facilitator
+CONSUMABLES KEYWORDS: stationery, paper, pen, marker, tape, glue, wire, components, resistor, LED, breadboard
+WORKSHOPS KEYWORDS: workshop, training, seminar, event, competition, tinkering kit, activity kit, science kit
+MAINTENANCE KEYWORDS: repair, maintenance, servicing, AMC, cleaning, replacement parts
+UTILITIES KEYWORDS: electricity, internet, wifi, broadband, phone, mobile recharge
+TRAVEL KEYWORDS: travel, transportation, fuel, conveyance, TA, DA
+Examples: "Salary payment 15000", "Workshop materials 8000", "Internet bill 2000", "Stationery 3000"
 
-**INTEREST EARNED**:
-- Bank interest on ATL account (Savings account only)
-- Must be refunded to Bharat Kosh
+**INTEREST** - Bank interest only:
+Keywords: interest, int paid, int credit, interest earned
+Only if direction is CREDIT
 
-**INELIGIBLE** - Not allowed under ATL scheme:
-- Bank charges, ATM fees, minimum balance charges
-- GST on bank charges
-- Personal expenses
-- Cash withdrawals
-- Non-ATL related expenses
-- Penalties or fines
+**GRANT** - Fund receipts:
+Keywords: NEFT, RTGS, fund transfer, grant, AIM, NITI Aayog, cash deposit (if for ATL)
+Only if direction is CREDIT and amount is large (>100000 typically)
 
-IMPORTANT FOR GFR 12-A:
-- Process ALL transactions without skipping
-- Maximum 20 transactions per response to ensure complete JSON
-- Accurate classification is critical for audit compliance
-- Include all transaction details
+**INELIGIBLE** - Not allowed:
+Keywords: bank charges, ATM, minimum balance, SMS charges, cheque book, GST (on bank charges), penalty, fine
+Examples: "Bank charges 300", "ATM withdrawal", "Min balance charges"
 
-OUTPUT FORMAT - STRICT JSON:
+CRITICAL RULES:
+1. Just because it's a DEBIT doesn't mean it's RECURRING
+2. Check narration for CAPITAL keywords (computer, printer, furniture, equipment, robot, kit with high value)
+3. Salary/Honorarium → RECURRING
+4. Equipment/Furniture → CAPITAL
+5. Process ALL transactions from ALL years (2020, 2021, 2022, 2023, 2024, 2025)
+6. DO NOT stop at 2023 - continue through entire document
+7. Maximum 25 transactions per batch to ensure complete JSON
+
+OUTPUT FORMAT:
 {
   "extractedTransactions": [
     {
       "date": "DD-MM-YYYY",
-      "narration": "Brief description",
+      "narration": "Description",
       "amount": 1000,
       "direction": "DEBIT",
       "intent": "CAPITAL",
@@ -83,11 +84,11 @@ OUTPUT FORMAT - STRICT JSON:
   ]
 }
 
-INTENT values: CAPITAL, RECURRING, SALARY, INTEREST, GRANT, INELIGIBLE
+INTENT values: CAPITAL, RECURRING, INTEREST, GRANT, INELIGIBLE
 `;
 
-  // Split large text into smaller chunks (reduce chunk size)
-  const MAX_CHUNK_SIZE = 6000; // Reduced from 12000 to get smaller batches
+  // Split large text into smaller chunks
+  const MAX_CHUNK_SIZE = 5000; // Further reduced to process more carefully
   const chunks: string[] = [];
   
   if (rawText.length > MAX_CHUNK_SIZE) {
@@ -123,24 +124,23 @@ INTENT values: CAPITAL, RECURRING, SALARY, INTEREST, GRANT, INELIGIBLE
     console.log(`📊 Processing chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
     
     const prompt = `
-Analyze this bank statement section and classify each transaction according to GFR 12-A requirements.
+Classify transactions from bank statement - ${chunks.length > 1 ? `Part ${i + 1}/${chunks.length}` : 'Complete'}.
 
-${chunks.length > 1 ? `This is Part ${i + 1} of ${chunks.length}.` : ''}
-
-CLASSIFICATION GUIDE:
-- Equipment/Furniture/Lab setup → CAPITAL
-- Salary/Workshops/Consumables → RECURRING  
+IMPORTANT CLASSIFICATION:
+- Computer/Laptop/Printer/3D Printer/Robot/Equipment/Furniture → CAPITAL
+- Salary/Honorarium/Wages → RECURRING  
+- Workshop/Training materials/Kits → RECURRING
+- Consumables/Stationery → RECURRING
 - Interest credit → INTEREST
-- Grant/Fund receipt → GRANT
 - Bank charges → INELIGIBLE
 
-Account Type: ${accountType}
+Account: ${accountType}
 
-Bank Statement:
+Statement text:
 ${chunk}
 
-Extract maximum 20-25 transactions to ensure complete, valid JSON with all closing brackets.
-Return ONLY the JSON object.
+Extract 15-25 transactions with ACCURATE classification. Ensure COMPLETE valid JSON with all closing brackets.
+DO NOT truncate. Process ALL dates including 2024 and 2025 if present.
 `;
 
     let response;
@@ -152,11 +152,11 @@ Return ONLY the JSON object.
           model: "gemini-2.5-flash",
           systemInstruction,
           generationConfig: {
-            temperature: 0.2, // Slightly increased for better classification
-            maxOutputTokens: 8000,
+            temperature: 0.15, // Lower for more consistent classification
+            maxOutputTokens: 6000, // Further reduced to ensure completion
             responseMimeType: "application/json",
-            topP: 0.95,
-            topK: 64
+            topP: 0.9,
+            topK: 40
           }
         });
         
