@@ -115,7 +115,7 @@ Return valid JSON with complete closing brackets. No truncation.
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const model = genAI.getGenerativeModel({ 
-          model: "gemini-2.5-flash",
+          model: "gemini-2.5-pro",
           systemInstruction,
           generationConfig: {
             temperature: 0.1,
