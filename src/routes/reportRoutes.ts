@@ -58,11 +58,20 @@ router.post("/", async (req, res) => {
     const transactions = extracted.map((t: any, idx: number) => {
       let category: ExpenseCategory = ExpenseCategory.INELIGIBLE;
 
-      if (t.intent === "CAPITAL") category = ExpenseCategory.NON_RECURRING;
-      else if (t.intent === "RECURRING" || t.intent === "SALARY")
-        category = ExpenseCategory.RECURRING;
-      else if (t.intent === "INTEREST") category = ExpenseCategory.INTEREST;
-      else if (t.intent === "GRANT") category = ExpenseCategory.GRANT_RECEIPT;
+      // Map intent to GFR 12-A categories
+      if (t.intent === "CAPITAL") {
+        category = ExpenseCategory.NON_RECURRING; // Capital Assets
+      }
+      else if (t.intent === "RECURRING" || t.intent === "SALARY") {
+        category = ExpenseCategory.RECURRING; // Grant General (Recurring)
+      }
+      else if (t.intent === "INTEREST") {
+        category = ExpenseCategory.INTEREST; // Interest Earned
+      }
+      else if (t.intent === "GRANT") {
+        category = ExpenseCategory.GRANT_RECEIPT; // Grant Receipt
+      }
+      // Default: INELIGIBLE
 
       return {
         id: `txn-${Date.now()}-${idx}`,

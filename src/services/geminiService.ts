@@ -25,31 +25,55 @@ SAVINGS ACCOUNT (Gross):
 `;
 
   const systemInstruction = `
-You are a financial transaction classifier for NITI Aayog ATL (Atal Tinkering Lab) audits.
+You are a financial transaction classifier for NITI Aayog ATL (Atal Tinkering Lab) audits and GFR 12-A Utilization Certificate preparation.
 
 FUNDING STRUCTURE:
 ${fundingInfo}
 
-CLASSIFICATION RULES:
-1. CAPITAL → Equipment, computers, furniture, lab setup, tools, machines, infrastructure
-2. RECURRING → Salary, honorarium, wages, staff payment, kits, workshops, travel, maintenance, utilities
-3. INTEREST → Bank interest credit (for Savings account)
-4. SALARY → Specifically honorarium, wages, staff payment
-5. GRANT → Grant receipt, fund transfer from NITI Aayog, cash deposits for ATL
-6. INELIGIBLE → Bank charges, ATM fees, minimum balance charges, GST on bank charges, personal expenses
+CRITICAL CLASSIFICATION RULES FOR GFR 12-A:
 
-CRITICAL INSTRUCTIONS:
-- Process transactions in BATCHES OF 20 maximum per response
-- Extract complete information for each transaction
-- Ensure valid JSON format
-- Close all JSON brackets properly
+**GRANT GENERAL (RECURRING)** - Revenue/Operational Expenses:
+- Salary, wages, honorarium for staff
+- Workshops, training programs
+- Consumables, stationery, office supplies
+- Travel expenses for ATL activities
+- Maintenance and repairs
+- Utilities (electricity, internet)
+- Event expenses
+- Tinkering kits and materials
+
+**CAPITAL ASSETS (NON-RECURRING)** - One-time Capital Purchases:
+- Equipment: 3D printers, computers, laptops, robotics kits
+- Furniture: tables, chairs, storage units
+- Infrastructure: lab setup, workbenches
+- Tools and machinery
+- Software licenses (perpetual)
+- Electronics and hardware
+
+**INTEREST EARNED**:
+- Bank interest on ATL account (Savings account only)
+- Must be refunded to Bharat Kosh
+
+**INELIGIBLE** - Not allowed under ATL scheme:
+- Bank charges, ATM fees, minimum balance charges
+- GST on bank charges
+- Personal expenses
+- Cash withdrawals
+- Non-ATL related expenses
+- Penalties or fines
+
+IMPORTANT FOR GFR 12-A:
+- Process ALL transactions without skipping
+- Maximum 20 transactions per response to ensure complete JSON
+- Accurate classification is critical for audit compliance
+- Include all transaction details
 
 OUTPUT FORMAT - STRICT JSON:
 {
   "extractedTransactions": [
     {
       "date": "DD-MM-YYYY",
-      "narration": "Brief description (max 100 chars)",
+      "narration": "Brief description",
       "amount": 1000,
       "direction": "DEBIT",
       "intent": "CAPITAL",
@@ -58,6 +82,8 @@ OUTPUT FORMAT - STRICT JSON:
     }
   ]
 }
+
+INTENT values: CAPITAL, RECURRING, SALARY, INTEREST, GRANT, INELIGIBLE
 `;
 
   // Split large text into smaller chunks (reduce chunk size)
@@ -97,16 +123,24 @@ OUTPUT FORMAT - STRICT JSON:
     console.log(`📊 Processing chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
     
     const prompt = `
-Extract transactions from this bank statement section ${chunks.length > 1 ? `(Part ${i + 1} of ${chunks.length})` : ''}.
+Analyze this bank statement section and classify each transaction according to GFR 12-A requirements.
 
-LIMIT: Extract maximum 20-25 transactions to ensure complete JSON output.
+${chunks.length > 1 ? `This is Part ${i + 1} of ${chunks.length}.` : ''}
+
+CLASSIFICATION GUIDE:
+- Equipment/Furniture/Lab setup → CAPITAL
+- Salary/Workshops/Consumables → RECURRING  
+- Interest credit → INTEREST
+- Grant/Fund receipt → GRANT
+- Bank charges → INELIGIBLE
 
 Account Type: ${accountType}
 
-Bank Statement Section:
+Bank Statement:
 ${chunk}
 
-Return valid JSON with complete closing brackets. No truncation.
+Extract maximum 20-25 transactions to ensure complete, valid JSON with all closing brackets.
+Return ONLY the JSON object.
 `;
 
     let response;
@@ -118,11 +152,11 @@ Return valid JSON with complete closing brackets. No truncation.
           model: "gemini-2.5-flash",
           systemInstruction,
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 8000, // Reduced to ensure completion
+            temperature: 0.2, // Slightly increased for better classification
+            maxOutputTokens: 8000,
             responseMimeType: "application/json",
             topP: 0.95,
-            topK: 40
+            topK: 64
           }
         });
         
