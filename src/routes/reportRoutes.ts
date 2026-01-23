@@ -55,32 +55,61 @@ router.post("/", async (req, res) => {
 
     const extracted = aiResult.extractedTransactions || [];
 
+    // Track spending to determine tranches
+    let nonRecurringSpent = 0;
+    let recurringSpent = 0;
+    const maxNonRecT1 = accountType === "Current" ? 976000 : 1000000;
+    const maxRecT1 = 200000;
+    const maxRecT2 = 400000;
+    
     const transactions = extracted.map((t: any, idx: number) => {
       let category: ExpenseCategory = ExpenseCategory.INELIGIBLE;
+      let tranche: TrancheType = TrancheType.TRANCHE_1;
 
       // Map intent to GFR 12-A categories
       if (t.intent === "CAPITAL") {
-        category = ExpenseCategory.NON_RECURRING; // Capital Assets
+        category = ExpenseCategory.NON_RECURRING;
       }
       else if (t.intent === "RECURRING" || t.intent === "SALARY") {
-        category = ExpenseCategory.RECURRING; // Grant General (Recurring)
+        category = ExpenseCategory.RECURRING;
       }
       else if (t.intent === "INTEREST") {
-        category = ExpenseCategory.INTEREST; // Interest Earned
+        category = ExpenseCategory.INTEREST;
       }
       else if (t.intent === "GRANT") {
-        category = ExpenseCategory.GRANT_RECEIPT; // Grant Receipt
+        category = ExpenseCategory.GRANT_RECEIPT;
       }
-      // Default: INELIGIBLE
+      
+      // Determine tranche based on spending
+      if (t.type === 'Debit' || t.direction === 'DEBIT') {
+        if (category === ExpenseCategory.NON_RECURRING) {
+          nonRecurringSpent += t.amount;
+          tranche = TrancheType.TRANCHE_1; // All capital in T1
+        }
+        else if (category === ExpenseCategory.RECURRING) {
+          if (recurringSpent < maxRecT1) {
+            tranche = TrancheType.TRANCHE_1;
+            recurringSpent += t.amount;
+          }
+          else if (recurringSpent < maxRecT1 + maxRecT2) {
+            tranche = TrancheType.TRANCHE_2;
+            recurringSpent += t.amount;
+          }
+          else {
+            tranche = TrancheType.TRANCHE_3;
+            recurringSpent += t.amount;
+          }
+        }
+      }
 
       return {
         id: `txn-${Date.now()}-${idx}`,
         date: t.date || "As per Statement",
         narration: t.narration || "—",
         amount: Math.abs(Number(t.amount) || 0),
-        type: t.direction === "DEBIT" ? "Debit" : "Credit",
+        type: (t.direction || t.type) === "DEBIT" ? "Debit" : "Credit",
         category,
-        tranche: TrancheType.TRANCHE_1,
+        tranche,
         financialYear: "2024-25",
         gstNo: t.gstNo || null,
         voucherNo: t.voucherNo || null,
@@ -94,6 +123,9 @@ router.post("/", async (req, res) => {
             : RiskLevel.LOW
       };
     });
+
+    console.log(`✅ Mapped ${transactions.length} transactions`);
+    console.log(`📊 Non-Recurring: ₹${Math.round(nonRecurringSpent/1000)}K, Recurring: ₹${Math.round(recurringSpent/1000)}K`);
 
     console.log("✅ Returning transactions:", transactions.length);
 
