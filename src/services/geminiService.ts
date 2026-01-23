@@ -87,14 +87,13 @@ OUTPUT FORMAT:
 INTENT values: CAPITAL, RECURRING, INTEREST, GRANT, INELIGIBLE
 `;
 
-  // Split large text into very small chunks to ensure completion
-  const MAX_CHUNK_SIZE = 3000; // Much smaller - about 10-15 transactions per chunk
+  // Split into very small chunks to guarantee complete JSON responses
+  const MAX_CHUNK_SIZE = 2000; // Very small - about 8-10 transactions
   const chunks: string[] = [];
   
   if (rawText.length > MAX_CHUNK_SIZE) {
-    console.log(`📄 Large document detected (${rawText.length} chars), splitting into chunks...`);
+    console.log(`📄 Large document (${rawText.length} chars), splitting into small chunks...`);
     
-    // Split by lines to avoid breaking transactions
     const lines = rawText.split('\n');
     let currentChunk = '';
     
@@ -111,7 +110,7 @@ INTENT values: CAPITAL, RECURRING, INTEREST, GRANT, INELIGIBLE
       chunks.push(currentChunk);
     }
     
-    console.log(`📄 Split into ${chunks.length} chunks`);
+    console.log(`📄 Created ${chunks.length} chunks for complete processing`);
   } else {
     chunks.push(rawText);
   }
@@ -124,23 +123,20 @@ INTENT values: CAPITAL, RECURRING, INTEREST, GRANT, INELIGIBLE
     console.log(`📊 Processing chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
     
     const prompt = `
-Extract and classify transactions from bank statement.
+Extract transactions from bank statement chunk ${i + 1}/${chunks.length}.
 
-Part ${i + 1} of ${chunks.length}
+Classification:
+- Computer/Equipment/Furniture → CAPITAL
+- Salary/Wages → RECURRING
+- Workshop/Materials → RECURRING
+- Interest → INTEREST
+- STEMROBO payment → RECURRING
+- Bank charges → INELIGIBLE
 
-Rules:
-- Computer/Equipment/Furniture/3D Printer → CAPITAL
-- Salary/Wages/Honorarium → RECURRING
-- Workshop/Training/Consumables → RECURRING
-- Interest credit → INTEREST
-- STEMROBO payment → RECURRING (operational expense)
-- Individual vendor payments → Check narration (equipment=CAPITAL, services=RECURRING)
-- Bank charges/SMS fees → INELIGIBLE
-
-Statement:
+Statement text:
 ${chunk}
 
-Extract 8-12 transactions maximum. Return COMPLETE JSON with ALL closing brackets.
+Extract 5-10 transactions. Return COMPLETE JSON with closing brackets.
 `;
 
     let response;
@@ -151,11 +147,11 @@ Extract 8-12 transactions maximum. Return COMPLETE JSON with ALL closing bracket
           model: "gemini-2.5-flash",
           systemInstruction,
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 4000, // Very small to force completion
+            temperature: 0.05,
+            maxOutputTokens: 3000, // Even smaller
             responseMimeType: "application/json",
-            topP: 0.85,
-            topK: 30
+            topP: 0.8,
+            topK: 20
           }
         });
         
