@@ -15,7 +15,7 @@ interface ExtractionResult {
 }
 
 /**
- * More robust extraction with response schema validation
+ * Fixed version with correct schema format for Gemini API
  */
 export const analyzeTransactionsAI = async (
   rawText: string,
@@ -29,7 +29,7 @@ export const analyzeTransactionsAI = async (
     ? "CURRENT: T1=₹11.76L (₹9.76L Cap+₹2L Rec), T2=₹3.92L Rec, T3=₹3.92L Rec"
     : "SAVINGS: T1=₹12L (₹10L Cap+₹2L Rec), T2=₹4L Rec, T3=₹4L Rec";
 
-  // Define JSON schema for structured output
+  // FIXED: Correct schema format - use "STRING" not ["string", "null"]
   const transactionSchema = {
     type: "object",
     properties: {
@@ -38,25 +38,41 @@ export const analyzeTransactionsAI = async (
         items: {
           type: "object",
           properties: {
-            date: { type: "string", description: "Date in DD-MM-YYYY format" },
-            narration: { type: "string", description: "Transaction description" },
-            amount: { type: "number", description: "Transaction amount" },
+            date: { 
+              type: "string", 
+              description: "Date in DD-MM-YYYY format",
+              nullable: false
+            },
+            narration: { 
+              type: "string", 
+              description: "Transaction description",
+              nullable: false
+            },
+            amount: { 
+              type: "number", 
+              description: "Transaction amount",
+              nullable: false
+            },
             direction: { 
               type: "string", 
               enum: ["DEBIT", "CREDIT"],
-              description: "Transaction direction" 
+              description: "Transaction direction",
+              nullable: false
             },
             intent: { 
               type: "string",
-              description: "Classification: CAPITAL, RECURRING, or INELIGIBLE"
+              description: "Classification: CAPITAL, RECURRING, or INELIGIBLE",
+              nullable: false
             },
             gstNo: { 
-              type: ["string", "null"],
-              description: "GST number if available" 
+              type: "string",
+              description: "GST number if available",
+              nullable: true  // FIXED: Use nullable: true instead of type: ["string", "null"]
             },
             voucherNo: { 
-              type: ["string", "null"],
-              description: "Voucher number if available" 
+              type: "string",
+              description: "Voucher number if available",
+              nullable: true  // FIXED: Use nullable: true instead of type: ["string", "null"]
             }
           },
           required: ["date", "narration", "amount", "direction", "intent"]
@@ -74,18 +90,20 @@ CLASSIFICATION RULES:
 - T1 CAPITAL (max ₹10L): computers, laptops, printers, 3D printers, robots, furniture, tables, equipment, machines, lab setup, AC, projectors
 - T1 RECURRING (max ₹2L): salary, honorarium, trainer fees, workshops, internet, electricity, consumables, stationery
 - T2/T3: ALL expenses are RECURRING (except bank charges/interest which are INELIGIBLE)
+- Interest Credit, SMS charges, bank fees → INELIGIBLE
 
 EXTRACTION RULES:
-1. Extract EVERY single transaction you see in the input
+1. Extract EVERY single transaction from the bank statement
 2. If unsure about classification, use RECURRING
-3. Bank charges and interest income → INELIGIBLE
+3. Bank charges, SMS fees, and interest income → INELIGIBLE
 4. Ensure dates are in DD-MM-YYYY format
-5. Amount should be numeric (no currency symbols)
+5. Amount should be numeric (no currency symbols or commas)
 6. Direction: DEBIT for expenses/withdrawals, CREDIT for deposits
+7. For gstNo and voucherNo: use null if not available
 
-OUTPUT: You must return valid JSON matching the schema provided. No extra text.`;
+OUTPUT: Valid JSON matching the schema. No extra text.`;
 
-  const MAX_CHUNK_SIZE = 1500; // Smaller chunks for reliability
+  const MAX_CHUNK_SIZE = 1500;
   const chunks = chunkText(rawText, MAX_CHUNK_SIZE);
   
   console.log(`📄 Processing ${rawText.length} chars in ${chunks.length} chunks`);
@@ -110,7 +128,7 @@ ${trancheContext}
 Transaction data:
 ${chunk}
 
-Extract every transaction you find. Return as structured JSON.`;
+Extract every transaction you find. Return as structured JSON matching the schema.`;
 
     const result = await extractChunkWithRetry(
       genAI,
@@ -132,7 +150,7 @@ Extract every transaction you find. Return as structured JSON.`;
       });
       
       allTransactions.push(...result.transactions);
-    } else if (!result.success && chunk.length > 600) {
+    } else if (!result.success && chunk.length > 500) {
       // Split failed chunk and add back to queue
       console.log(`🔄 Chunk ${i + 1} failed - splitting into smaller parts`);
       const [part1, part2] = splitChunk(chunk);
@@ -174,6 +192,7 @@ Extract every transaction you find. Return as structured JSON.`;
 
 /**
  * Retry logic with schema-enforced JSON
+ * FIXED: Uses correct model names and handles API errors properly
  */
 async function extractChunkWithRetry(
   genAI: GoogleGenerativeAI,
@@ -184,11 +203,12 @@ async function extractChunkWithRetry(
   totalChunks: number
 ): Promise<{ success: boolean; transactions: Transaction[] }> {
   
+  // FIXED: Use only models that exist
   const attempts = [
     { model: "gemini-2.5-flash", temp: 0.1, tokens: 8000, useSchema: true },
-    { model: "gemini-2.0-flash", temp: 0.05, tokens: 6000, useSchema: true },
-    { model: "gemini-1.5-flash", temp: 0.1, tokens: 8000, useSchema: true },
-    { model: "gemini-1.5-flash", temp: 0.1, tokens: 6000, useSchema: false },
+    { model: "gemini-1.5-pro", temp: 0.1, tokens: 8000, useSchema: true },
+    { model: "gemini-1.5-flash-8b", temp: 0.05, tokens: 6000, useSchema: true },
+    { model: "gemini-1.5-flash-8b", temp: 0.1, tokens: 6000, useSchema: false },
   ];
 
   for (let i = 0; i < attempts.length; i++) {
@@ -240,7 +260,8 @@ async function extractChunkWithRetry(
       console.log(`  Attempt ${i + 1}: Got empty response`);
       
     } catch (err: any) {
-      console.error(`  Attempt ${i + 1} failed: ${err.message}`);
+      const errorMsg = err.message || String(err);
+      console.error(`  Attempt ${i + 1} failed: ${errorMsg.substring(0, 150)}`);
       
       if (i < attempts.length - 1) {
         await new Promise(r => setTimeout(r, 1000));
