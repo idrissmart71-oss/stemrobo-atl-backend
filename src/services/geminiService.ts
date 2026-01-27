@@ -1,9 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-/**
- * SIMPLIFIED VERSION - No schema enforcement, maximum compatibility
- * This version works with all Gemini models and avoids schema validation errors
- */
 export const analyzeTransactionsAI = async (
   rawText: string,
   fileData?: undefined,
@@ -16,46 +12,27 @@ export const analyzeTransactionsAI = async (
     ? "CURRENT: T1=₹11.76L (₹9.76L Cap+₹2L Rec), T2=₹3.92L Rec, T3=₹3.92L Rec"
     : "SAVINGS: T1=₹12L (₹10L Cap+₹2L Rec), T2=₹4L Rec, T3=₹4L Rec";
 
-  const systemInstruction = `You are a transaction extraction AI for ATL PFMS audit. ${fundingInfo}
+  const systemInstruction = `
+Extract bank transactions for ATL PFMS audit. ${fundingInfo}
 
-CLASSIFICATION RULES:
-T1 CAPITAL (₹10L max): computer, laptop, printer, 3D printer, robot, furniture, table, equipment, machine, lab setup, AC, projector
-T1 RECURRING (₹2L): salary, honorarium, trainer, workshop, internet, electricity, consumable, stationery
-T2/T3: ALL expenses → RECURRING (except Interest/Bank charges → INELIGIBLE)
+T1 CLASSIFICATION:
+CAPITAL (₹10L max): computer, laptop, printer, 3D printer, robot, furniture, table, equipment, machine, lab setup, AC, projector
+RECURRING (₹2L): salary, honorarium, trainer, workshop, internet, electricity, consumable, stationery
 
-CRITICAL INSTRUCTIONS:
-1. Extract EVERY transaction from the input
-2. MUST return valid, parseable JSON - no syntax errors
-3. Use "RECURRING" if classification is uncertain
-4. Interest Credit, SMS charges, bank fees → INELIGIBLE
-5. Include all fields: date, narration, amount, direction, intent, gstNo, voucherNo
+T2/T3: ALL expenses → RECURRING (except Interest/Bank charges)
 
-REQUIRED OUTPUT (must be valid JSON):
-{
-  "extractedTransactions": [
-    {
-      "date": "DD-MM-YYYY",
-      "narration": "Transaction description",
-      "amount": 0,
-      "direction": "DEBIT",
-      "intent": "CAPITAL",
-      "gstNo": null,
-      "voucherNo": null
-    }
-  ]
-}
+STRICT RULES:
+- Extract EVERY transaction
+- Maximum 8 transactions per response
+- ALWAYS complete JSON with closing brackets
+- If unsure, classify as RECURRING
 
-CRITICAL: 
-- Return ONLY the JSON object, no markdown, no explanation
-- Every string in double quotes
-- All property names in double quotes
-- Use null (not "null") for null values
-- Ensure all brackets are properly closed
-- No trailing commas
-- No comments`;
+OUTPUT (MUST be complete):
+{"extractedTransactions":[{"date":"DD-MM-YYYY","narration":"Text","amount":1000,"direction":"DEBIT","intent":"CAPITAL","gstNo":null,"voucherNo":null}]}
+`;
 
-  // Smaller chunks for reliability
-  const MAX_CHUNK = 1200;
+  // Ultra-small chunks to guarantee completion
+  const MAX_CHUNK = 1200; // ~6-8 transactions
   const lines = rawText.split('\n');
   const chunks: string[] = [];
   let current = '';
@@ -77,73 +54,50 @@ CRITICAL:
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    console.log(`\n📊 Chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
+    console.log(`📊 Chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
     
     const maxNonRec = accountType === "Current" ? 976000 : 1000000;
     const inT1 = totalSpent < (maxNonRec + 200000);
     
-    const prompt = `Extract ALL transactions from this bank statement section.
+    const prompt = `
+Extract transactions chunk ${i + 1}/${chunks.length}. ${inT1 ? 'T1 mode' : 'T2/T3 mode (all RECURRING)'}.
 
-Context: ${inT1 ? 'Tranche 1 - Capital and Recurring allowed' : 'Tranche 2/3 - Only Recurring allowed'}
-
-Bank Statement Data:
 ${chunk}
 
-CRITICAL: Return ONLY valid JSON. No markdown backticks. No explanatory text. Just the JSON object.
-
-Example format:
-{"extractedTransactions":[{"date":"28-08-2020","narration":"UPI Payment","amount":1.00,"direction":"DEBIT","intent":"INELIGIBLE","gstNo":null,"voucherNo":null}]}
+Return 5-8 transactions. COMPLETE JSON required.
 `;
 
-    let chunkSuccess = false;
+    let response;
+    let success = false;
     
-    // Try different models in sequence
-    const models = [
-      "gemini-1.5-pro",
-      "gemini-2.5-flash", 
-      "gemini-2.0-flash-exp"
-    ];
-    
-    for (let modelIdx = 0; modelIdx < models.length; modelIdx++) {
-      const modelName = models[modelIdx];
-      
+    // Try with different models/configs if first fails
+    for (let attempt = 1; attempt <= 5; attempt++) {
       try {
-        console.log(`  Trying ${modelName}...`);
+        const maxTokens = attempt <= 2 ? 2000 : 1500; // Reduce on retry
+        const temp = attempt === 1 ? 0.05 : 0.1;
         
         const model = genAI.getGenerativeModel({ 
-          model: modelName,
+          model: "gemini-2.5-flash",
           systemInstruction,
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 4096,
+            temperature: temp,
+            maxOutputTokens: maxTokens,
             responseMimeType: "application/json"
           }
         });
         
-        const response = await model.generateContent(prompt);
-        let rawText = response.response.text();
+        response = await model.generateContent(prompt);
         
-        // Aggressive cleaning
-        rawText = rawText
-          .replace(/```json\s*/g, '')
-          .replace(/```\s*/g, '')
-          .replace(/^\s*\n/gm, '')
-          .trim();
+        // Immediate parse attempt
+        const raw = response.response.text();
+        let cleaned = raw.replace(/```json|```/g, "").trim();
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (match) cleaned = match[0];
         
-        // Extract JSON if embedded in text
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          rawText = jsonMatch[0];
-        }
+        const parsed = JSON.parse(cleaned);
         
-        // Try to parse
-        const parsed = JSON.parse(rawText);
-        
-        if (parsed.extractedTransactions && 
-            Array.isArray(parsed.extractedTransactions) && 
-            parsed.extractedTransactions.length > 0) {
-          
-          console.log(`✅ Chunk ${i + 1}: Extracted ${parsed.extractedTransactions.length} transactions with ${modelName}`);
+        if (parsed.extractedTransactions && Array.isArray(parsed.extractedTransactions)) {
+          console.log(`✅ Chunk ${i + 1}: ${parsed.extractedTransactions.length} txns (attempt ${attempt})`);
           
           parsed.extractedTransactions.forEach((t: any) => {
             if (t.direction === 'DEBIT' && t.intent !== 'INELIGIBLE') {
@@ -152,66 +106,81 @@ Example format:
           });
           
           allTxns.push(...parsed.extractedTransactions);
-          chunkSuccess = true;
-          break; // Success, move to next chunk
-        } else {
-          console.log(`  ${modelName}: Empty result`);
+          success = true;
+          break;
         }
-        
       } catch (err: any) {
-        const errorMsg = err.message || String(err);
-        console.error(`  ${modelName} failed: ${errorMsg.substring(0, 100)}`);
-      }
-      
-      // Small delay between model attempts
-      if (modelIdx < models.length - 1 && !chunkSuccess) {
-        await new Promise(r => setTimeout(r, 500));
+        console.error(`Chunk ${i + 1} attempt ${attempt} failed:`, err.message);
+        
+        if (attempt < 5) {
+          await new Promise(r => setTimeout(r, attempt * 1000));
+          continue;
+        }
       }
     }
     
-    // If all models failed, try splitting the chunk
-    if (!chunkSuccess && chunk.length > 400) {
-      console.log(`🔄 Chunk ${i + 1}: All models failed, splitting chunk...`);
-      const mid = Math.floor(chunk.length / 2);
-      const lineBreak = chunk.lastIndexOf('\n', mid);
-      const splitPoint = lineBreak > mid - 200 ? lineBreak : mid;
+    // If all attempts failed, try aggressive salvage
+    if (!success && response) {
+      console.log(`⚠️ Chunk ${i + 1}: Attempting aggressive salvage...`);
+      try {
+        const raw = response.response.text();
+        let cleaned = raw.replace(/```json|```/g, "").trim();
+        
+        // Fix common issues
+        const openBrackets = (cleaned.match(/\[/g) || []).length;
+        const closeBrackets = (cleaned.match(/\]/g) || []).length;
+        const openBraces = (cleaned.match(/\{/g) || []).length;
+        const closeBraces = (cleaned.match(/\}/g) || []).length;
+        
+        // Remove trailing incomplete object
+        const lastComma = cleaned.lastIndexOf(',');
+        const lastBrace = cleaned.lastIndexOf('}');
+        if (lastComma > lastBrace) {
+          cleaned = cleaned.substring(0, lastComma);
+        }
+        
+        // Add missing brackets
+        for (let j = closeBrackets; j < openBrackets; j++) cleaned += ']';
+        for (let j = closeBraces; j < openBraces; j++) cleaned += '}';
+        
+        const salvaged = JSON.parse(cleaned);
+        if (salvaged.extractedTransactions && salvaged.extractedTransactions.length > 0) {
+          console.log(`✅ Salvaged ${salvaged.extractedTransactions.length} from chunk ${i + 1}`);
+          allTxns.push(...salvaged.extractedTransactions);
+          success = true;
+        }
+      } catch (salvageErr) {
+        console.error(`❌ Chunk ${i + 1}: Salvage failed`);
+      }
+    }
+    
+    // If still failed, try re-processing with even smaller chunk
+    if (!success && chunk.length > 600) {
+      console.log(`🔄 Chunk ${i + 1}: Splitting into smaller pieces...`);
+      const half = Math.floor(chunk.length / 2);
+      const part1 = chunk.substring(0, half);
+      const part2 = chunk.substring(half);
       
-      const part1 = chunk.substring(0, splitPoint);
-      const part2 = chunk.substring(splitPoint);
-      
-      chunks.splice(i + 1, 0, part2, part1);
-      i--; // Reprocess from part1
+      chunks.splice(i + 1, 0, part1, part2);
+      chunks.splice(i, 1);
+      i--; // Reprocess
       continue;
     }
     
-    if (!chunkSuccess) {
-      console.error(`❌ Chunk ${i + 1}: Failed completely after all attempts`);
-    }
-    
-    // Rate limiting delay
+    // Small delay between chunks
     if (i < chunks.length - 1) {
       await new Promise(r => setTimeout(r, 800));
     }
   }
 
-  console.log(`\n✅ EXTRACTION COMPLETE: ${allTxns.length} total transactions`);
+  console.log(`✅ TOTAL EXTRACTED: ${allTxns.length} transactions`);
 
   if (allTxns.length === 0) {
-    throw new Error(
-      "Failed to extract any transactions. Please verify:\n" +
-      "1. Input contains valid bank statement data\n" +
-      "2. Transactions have dates, amounts, and descriptions\n" +
-      "3. File format is readable"
-    );
+    throw new Error("Failed to extract any transactions. Please check the format.");
   }
 
-  // Quality check
-  const avgCharsPerTxn = rawText.length / allTxns.length;
-  if (avgCharsPerTxn > 150) {
-    console.warn(
-      `⚠️ Warning: ${allTxns.length} transactions from ${rawText.length} chars ` +
-      `(${Math.round(avgCharsPerTxn)} chars/txn). Extraction may be incomplete.`
-    );
+  if (allTxns.length < 20 && rawText.length > 2000) {
+    console.warn(`⚠️ Only extracted ${allTxns.length} transactions from ${rawText.length} chars - may be incomplete`);
   }
 
   return { extractedTransactions: allTxns };
