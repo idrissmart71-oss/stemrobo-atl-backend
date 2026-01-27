@@ -9,203 +9,185 @@ export const analyzeTransactionsAI = async (
   const genAI = new GoogleGenerativeAI(process.env.API_KEY!);
 
   const fundingInfo = accountType === "Current" 
-    ? "CURRENT ACCOUNT: T1=₹11.76L (₹9.76L Non-Rec + ₹2L Rec), T2=₹3.92L (All Rec), T3=₹3.92L (All Rec)"
-    : "SAVINGS ACCOUNT: T1=₹12L (₹10L Non-Rec + ₹2L Rec), T2=₹4L (All Rec), T3=₹4L (All Rec)";
+    ? "CURRENT: T1=₹11.76L (₹9.76L Cap+₹2L Rec), T2=₹3.92L Rec, T3=₹3.92L Rec"
+    : "SAVINGS: T1=₹12L (₹10L Cap+₹2L Rec), T2=₹4L Rec, T3=₹4L Rec";
 
   const systemInstruction = `
-You are a bank statement transaction extractor for NITI Aayog ATL PFMS Grant Management.
+Extract ALL bank transactions for ATL PFMS audit. ${fundingInfo}
 
-PFMS GRANT STRUCTURE: ${fundingInfo}
+T1 CLASSIFICATION:
+CAPITAL (₹10L max): computer, laptop, printer, 3D printer, robot, furniture, table, equipment, machine, lab setup, AC, projector
+RECURRING (₹2L): salary, honorarium, trainer, workshop, internet, electricity, consumable, stationery
 
-TRANCHE 1 (₹12 Lakh) - Equipment + Initial Operations:
-NON-RECURRING (₹10 Lakh):
-- Equipment: 3D Printers, Computers, Laptops, Robotics Kits, Electronics Lab Equipment
-- Infrastructure: Lab Setup, Furniture, Workbenches, Storage Units, Display Boards
-- Software/Hardware: CAD Software, Programming Tools, Hardware Components
-- Lab Assets: Tools, Machines, Testing Equipment, Safety Equipment
+T2/T3: ALL expenses → RECURRING (except Interest/Bank charges)
 
-RECURRING (₹2 Lakh):
-- Trainer Honorarium: ATL Mentor, Workshop Trainer, Guest Instructor
-- Internet & Utilities: Broadband, WiFi, Electricity
-- Consumables: Stationery, Paper, Markers, Prototyping Materials
+RULES:
+- Extract EVERY SINGLE transaction from the provided text
+- NO LIMITS on number of transactions - extract ALL of them
+- ALWAYS return complete valid JSON
+- If unsure about classification, use RECURRING
 
-TRANCHE 2 (₹4 Lakh) - ALL RECURRING:
-- Staff Salary: Regular Staff, Lab Attendant
-- Training Expenses: Workshops, Seminars, Student Kits
-- Maintenance: Equipment Repair, Lab Upkeep
-- Operational Costs: Competition Fees, Event Organization
-
-TRANCHE 3 (₹4 Lakh) - ALL RECURRING:
-- Advanced Training: Specialized Workshops, Certification Programs
-- Project Execution Support: Project Materials, Documentation
-- Monitoring & Reporting: Assessment Tools, Reporting Materials
-
-CLASSIFICATION RULES:
-1. TRANCHE 1 ONLY: Equipment/Infrastructure → CAPITAL (up to ₹10L)
-2. TRANCHE 1: Operations/Honorarium → RECURRING (up to ₹2L)
-3. TRANCHE 2 & 3: EVERYTHING → RECURRING (no capital allowed)
-4. Exceptions: Interest=INTEREST, Bank charges/GST/SMS=INELIGIBLE
-
-KEYWORDS:
-CAPITAL (T1 only): computer, laptop, printer, 3D printer, robot, furniture, table, chair, equipment, machine, tool, hardware, electronics kit, lab setup, infrastructure, AC, projector
-RECURRING: salary, honorarium, trainer, workshop, training, consumable, stationery, internet, electricity, maintenance, repair, kit (small value), material
-INTEREST: interest credit, int paid, int earned
-GRANT: NEFT, RTGS, fund transfer (large amount >100000)
-INELIGIBLE: bank charge, ATM, minimum balance, SMS charge, GST (on bank services)
-
-CRITICAL:
-- Extract ALL transactions line by line
-- Continue through ALL years (2020-2025)
-- Maximum 10 transactions per response
-- COMPLETE valid JSON required
-
-OUTPUT:
-{
-  "extractedTransactions": [
-    {
-      "date": "DD-MM-YYYY",
-      "narration": "Description",
-      "amount": 1000,
-      "direction": "DEBIT",
-      "intent": "CAPITAL",
-      "gstNo": null,
-      "voucherNo": null
-    }
-  ]
-}
+OUTPUT FORMAT (must be valid JSON):
+{"extractedTransactions":[{"date":"DD-MM-YYYY","narration":"Description","amount":1000,"direction":"DEBIT","intent":"CAPITAL","gstNo":null,"voucherNo":null}]}
 `;
 
-  // Process in VERY small chunks to ensure completion
-  const MAX_CHUNK_SIZE = 1500; // About 6-8 transactions per chunk
+  // Larger chunks since we removed transaction limits
+  const MAX_CHUNK = 2500; // Can handle ~15-20 transactions now
   const lines = rawText.split('\n');
   const chunks: string[] = [];
-  let currentChunk = '';
+  let current = '';
   
   for (const line of lines) {
-    if ((currentChunk + line).length > MAX_CHUNK_SIZE && currentChunk.length > 0) {
-      chunks.push(currentChunk);
-      currentChunk = line + '\n';
+    if ((current + line).length > MAX_CHUNK && current.length > 0) {
+      chunks.push(current);
+      current = line + '\n';
     } else {
-      currentChunk += line + '\n';
+      current += line + '\n';
     }
   }
-  if (currentChunk.length > 0) chunks.push(currentChunk);
+  if (current.length > 0) chunks.push(current);
 
-  console.log(`📄 Processing ${rawText.length} chars in ${chunks.length} chunks`);
+  console.log(`📄 Processing ${rawText.length} chars in ${chunks.length} chunks (NO transaction limits)`);
 
-  const allTransactions: any[] = [];
-  let totalSpent = 0; // Track total spending to determine tranche
+  const allTxns: any[] = [];
+  let totalSpent = 0;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     console.log(`📊 Chunk ${i + 1}/${chunks.length} (${chunk.length} chars)`);
     
-    // Determine current tranche based on spending so far
-    const maxNonRecT1 = accountType === "Current" ? 976000 : 1000000;
-    const maxRecT1 = 200000;
-    const isInTranche1 = totalSpent < (maxNonRecT1 + maxRecT1);
+    const maxNonRec = accountType === "Current" ? 976000 : 1000000;
+    const inT1 = totalSpent < (maxNonRec + 200000);
     
     const prompt = `
-Extract transactions from bank statement chunk ${i + 1}/${chunks.length}.
+Extract ALL transactions from this section (chunk ${i + 1}/${chunks.length}).
 
-Current context: ${totalSpent > 0 ? `₹${Math.round(totalSpent/1000)}K already spent` : 'Beginning of statement'}
-Tranche status: ${isInTranche1 ? 'TRANCHE 1 (Capital + Recurring allowed)' : 'TRANCHE 2/3 (ONLY Recurring allowed)'}
+Context: ${inT1 ? 'Tranche 1 - Capital and Recurring allowed' : 'Tranche 2/3 - Only Recurring allowed'}
 
-Rules for this chunk:
-${isInTranche1 ? 
-  '- Equipment/Furniture → CAPITAL\n- Salary/Operations → RECURRING' : 
-  '- ALL expenses → RECURRING (no capital allowed)\n- Only exceptions: Interest=INTEREST, Bank charges=INELIGIBLE'
-}
-
-Statement text:
 ${chunk}
 
-Extract 5-10 transactions. COMPLETE JSON required.
+Extract EVERY transaction you see. No limits. Return complete JSON.
 `;
 
     let response;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    let success = false;
+    
+    // Try with progressively more conservative settings
+    for (let attempt = 1; attempt <= 5; attempt++) {
       try {
+        const maxTokens = 4000 - (attempt * 500); // Start big, reduce if needed
+        const temp = 0.05 + (attempt * 0.02);
+        
+        console.log(`  Attempt ${attempt}: ${maxTokens} tokens, temp ${temp}`);
+        
         const model = genAI.getGenerativeModel({ 
           model: "gemini-2.5-flash",
           systemInstruction,
           generationConfig: {
-            temperature: 0.05,
-            maxOutputTokens: 2500,
+            temperature: temp,
+            maxOutputTokens: maxTokens,
             responseMimeType: "application/json"
           }
         });
         
         response = await model.generateContent(prompt);
-        break;
+        
+        const raw = response.response.text();
+        let cleaned = raw.replace(/```json|```/g, "").trim();
+        const match = cleaned.match(/\{[\s\S]*\}/);
+        if (match) cleaned = match[0];
+        
+        const parsed = JSON.parse(cleaned);
+        
+        if (parsed.extractedTransactions && Array.isArray(parsed.extractedTransactions) && parsed.extractedTransactions.length > 0) {
+          console.log(`✅ Chunk ${i + 1}: Extracted ${parsed.extractedTransactions.length} transactions`);
+          
+          parsed.extractedTransactions.forEach((t: any) => {
+            if (t.direction === 'DEBIT' && t.intent !== 'INELIGIBLE') {
+              totalSpent += t.amount || 0;
+            }
+          });
+          
+          allTxns.push(...parsed.extractedTransactions);
+          success = true;
+          break;
+        } else {
+          console.log(`  Attempt ${attempt}: Got empty or invalid response`);
+        }
       } catch (err: any) {
-        if (attempt === 3) throw err;
-        await new Promise(r => setTimeout(r, 2000));
+        console.error(`  Attempt ${attempt} failed:`, err.message);
+        
+        if (attempt < 5) {
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
       }
     }
-
-    const rawResponse = response!.response.text();
-    let cleaned = rawResponse.replace(/```json|```/g, "").trim();
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-    if (jsonMatch) cleaned = jsonMatch[0];
-
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (parsed.extractedTransactions && parsed.extractedTransactions.length > 0) {
-        console.log(`✅ Chunk ${i + 1}: ${parsed.extractedTransactions.length} transactions`);
-        
-        // Update total spent (only debits)
-        parsed.extractedTransactions.forEach((t: any) => {
-          if (t.direction === 'DEBIT' && t.intent !== 'INELIGIBLE') {
-            totalSpent += t.amount || 0;
-          }
-        });
-        
-        allTransactions.push(...parsed.extractedTransactions);
-      }
-    } catch (err: any) {
-      console.error(`⚠️ Chunk ${i + 1} parse error, attempting fix...`);
-      // Try to fix incomplete JSON
+    
+    // Aggressive salvage if all attempts failed
+    if (!success && response) {
+      console.log(`⚠️ Chunk ${i + 1}: Attempting salvage...`);
       try {
+        const raw = response.response.text();
+        let cleaned = raw.replace(/```json|```/g, "").trim();
+        
+        // Remove trailing comma and incomplete object
+        const lastComma = cleaned.lastIndexOf(',');
+        const lastCloseBrace = cleaned.lastIndexOf('}');
+        if (lastComma > lastCloseBrace) {
+          cleaned = cleaned.substring(0, lastComma);
+        }
+        
+        // Count and fix brackets
         const openBrackets = (cleaned.match(/\[/g) || []).length;
         const closeBrackets = (cleaned.match(/\]/g) || []).length;
         const openBraces = (cleaned.match(/\{/g) || []).length;
         const closeBraces = (cleaned.match(/\}/g) || []).length;
         
-        let fixed = cleaned;
+        for (let j = closeBrackets; j < openBrackets; j++) cleaned += ']';
+        for (let j = closeBraces; j < openBraces; j++) cleaned += '}';
         
-        // Remove incomplete last object
-        const lastComma = fixed.lastIndexOf(',');
-        const lastBrace = fixed.lastIndexOf('}');
-        if (lastComma > lastBrace) {
-          fixed = fixed.substring(0, lastComma);
-        }
-        
-        // Add missing brackets
-        for (let j = 0; j < openBrackets - closeBrackets; j++) fixed += ']';
-        for (let j = 0; j < openBraces - closeBraces; j++) fixed += '}';
-        
-        const salvaged = JSON.parse(fixed);
+        const salvaged = JSON.parse(cleaned);
         if (salvaged.extractedTransactions && salvaged.extractedTransactions.length > 0) {
-          console.log(`✅ Salvaged ${salvaged.extractedTransactions.length} from chunk ${i + 1}`);
-          allTransactions.push(...salvaged.extractedTransactions);
+          console.log(`✅ Salvaged ${salvaged.extractedTransactions.length} transactions from chunk ${i + 1}`);
+          allTxns.push(...salvaged.extractedTransactions);
+          success = true;
         }
-      } catch {
-        console.error(`❌ Chunk ${i + 1} failed completely`);
+      } catch (salvageErr) {
+        console.error(`  Salvage failed:`, salvageErr);
       }
     }
     
-    // Small delay between chunks to avoid rate limiting
+    // If STILL failed and chunk is large, split it
+    if (!success && chunk.length > 1000) {
+      console.log(`🔄 Chunk ${i + 1}: Failed completely, splitting in half...`);
+      const mid = Math.floor(chunk.length / 2);
+      const part1 = chunk.substring(0, mid);
+      const part2 = chunk.substring(mid);
+      
+      chunks.splice(i + 1, 0, part2);
+      chunks.splice(i, 1, part1);
+      i--; // Reprocess from part1
+      continue;
+    }
+    
+    // Delay between chunks
     if (i < chunks.length - 1) {
       await new Promise(r => setTimeout(r, 500));
     }
   }
 
-  console.log(`✅ TOTAL EXTRACTED: ${allTransactions.length} transactions`);
+  console.log(`✅ EXTRACTION COMPLETE: ${allTxns.length} total transactions`);
 
-  if (allTransactions.length === 0) {
-    throw new Error("No transactions extracted. Please check the statement format.");
+  if (allTxns.length === 0) {
+    throw new Error("Failed to extract any transactions. Please try again or check the format.");
   }
 
-  return { extractedTransactions: allTransactions };
+  // Warn if seems incomplete
+  const avgCharsPerTxn = rawText.length / allTxns.length;
+  if (avgCharsPerTxn > 150) {
+    console.warn(`⚠️ Warning: Only ${allTxns.length} transactions from ${rawText.length} chars (${Math.round(avgCharsPerTxn)} chars/txn). May be incomplete.`);
+  }
+
+  return { extractedTransactions: allTxns };
 };
