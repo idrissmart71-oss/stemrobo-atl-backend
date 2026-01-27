@@ -100,7 +100,7 @@ Example format:
     // Try different models in sequence
     const models = [
       "gemini-1.5-pro",
-      "gemini-1.5-flash-8b", 
+      "gemini-2.5-flash", 
       "gemini-2.0-flash-exp"
     ];
     
