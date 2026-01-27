@@ -13,41 +13,51 @@ export const analyzeTransactionsAI = async (
     : "SAVINGS ACCOUNT: T1=₹12L (₹10L Non-Rec + ₹2L Rec), T2=₹4L (All Rec), T3=₹4L (All Rec)";
 
   const systemInstruction = `
-You are a bank statement transaction extractor for NITI Aayog ATL audits.
+You are a bank statement transaction extractor for NITI Aayog ATL PFMS Grant Management.
 
-FUNDING: ${fundingInfo}
+PFMS GRANT STRUCTURE: ${fundingInfo}
 
-TRANCHE RULES - VERY IMPORTANT:
-1. TRANCHE 1 ONLY (first ₹12L received):
-   - Equipment/Computers/Furniture/Lab setup → CAPITAL (up to ₹10L)
-   - Salary/Workshops/Consumables/Utilities → RECURRING (up to ₹2L)
-   
-2. AFTER TRANCHE 1 (after first ₹12L spent):
-   - ALL expenses → RECURRING (no more capital allowed)
-   - ONLY exceptions: Interest (INTEREST), Bank charges (INELIGIBLE)
+TRANCHE 1 (₹12 Lakh) - Equipment + Initial Operations:
+NON-RECURRING (₹10 Lakh):
+- Equipment: 3D Printers, Computers, Laptops, Robotics Kits, Electronics Lab Equipment
+- Infrastructure: Lab Setup, Furniture, Workbenches, Storage Units, Display Boards
+- Software/Hardware: CAD Software, Programming Tools, Hardware Components
+- Lab Assets: Tools, Machines, Testing Equipment, Safety Equipment
 
-CLASSIFICATION KEYWORDS:
-CAPITAL (Tranche 1 only):
-- Equipment: computer, laptop, printer, 3D printer, robot, Arduino, electronics, sensor, motor, drill
-- Furniture: table, chair, desk, cabinet, shelf, workbench
-- Infrastructure: AC, fan, electrical, wiring
+RECURRING (₹2 Lakh):
+- Trainer Honorarium: ATL Mentor, Workshop Trainer, Guest Instructor
+- Internet & Utilities: Broadband, WiFi, Electricity
+- Consumables: Stationery, Paper, Markers, Prototyping Materials
 
-RECURRING (Always, and T2/T3 everything):
-- Salary/Wages: salary, honorarium, wage, stipend, payment to person
-- Operations: workshop, training, consumable, stationery, material, kit
-- Utilities: electricity, internet, phone, maintenance, repair
-- Vendor payments (after T1): ALL vendor payments
+TRANCHE 2 (₹4 Lakh) - ALL RECURRING:
+- Staff Salary: Regular Staff, Lab Attendant
+- Training Expenses: Workshops, Seminars, Student Kits
+- Maintenance: Equipment Repair, Lab Upkeep
+- Operational Costs: Competition Fees, Event Organization
 
-INTEREST: Bank interest credit only
-GRANT: Fund receipt from NITI Aayog (NEFT/RTGS >1L)
-INELIGIBLE: Bank charges, ATM, SMS fee, GST on bank charges
+TRANCHE 3 (₹4 Lakh) - ALL RECURRING:
+- Advanced Training: Specialized Workshops, Certification Programs
+- Project Execution Support: Project Materials, Documentation
+- Monitoring & Reporting: Assessment Tools, Reporting Materials
 
-CRITICAL INSTRUCTIONS:
-- Extract EVERY transaction line by line
-- Process COMPLETE statement from start to end
-- Do NOT stop at any year - continue through 2025
-- Return maximum 10 transactions per response
-- Ensure COMPLETE valid JSON
+CLASSIFICATION RULES:
+1. TRANCHE 1 ONLY: Equipment/Infrastructure → CAPITAL (up to ₹10L)
+2. TRANCHE 1: Operations/Honorarium → RECURRING (up to ₹2L)
+3. TRANCHE 2 & 3: EVERYTHING → RECURRING (no capital allowed)
+4. Exceptions: Interest=INTEREST, Bank charges/GST/SMS=INELIGIBLE
+
+KEYWORDS:
+CAPITAL (T1 only): computer, laptop, printer, 3D printer, robot, furniture, table, chair, equipment, machine, tool, hardware, electronics kit, lab setup, infrastructure, AC, projector
+RECURRING: salary, honorarium, trainer, workshop, training, consumable, stationery, internet, electricity, maintenance, repair, kit (small value), material
+INTEREST: interest credit, int paid, int earned
+GRANT: NEFT, RTGS, fund transfer (large amount >100000)
+INELIGIBLE: bank charge, ATM, minimum balance, SMS charge, GST (on bank services)
+
+CRITICAL:
+- Extract ALL transactions line by line
+- Continue through ALL years (2020-2025)
+- Maximum 10 transactions per response
+- COMPLETE valid JSON required
 
 OUTPUT:
 {
@@ -117,7 +127,7 @@ Extract 5-10 transactions. COMPLETE JSON required.
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const model = genAI.getGenerativeModel({ 
-          model: "gemini-2.5-flash",
+          model: "gemini-2.0-flash-exp",
           systemInstruction,
           generationConfig: {
             temperature: 0.05,
